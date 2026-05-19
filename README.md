@@ -67,4 +67,5 @@ docker compose restart backend
 
 ## Screenshots
 
-_Coming soon._
+<img width="1472" height="852" alt="Screenshot 2026-05-19 at 1 22 20 PM" src="https://github.com/user-attachments/assets/f4bd75be-41c0-453b-82ad-17d2b2b4086b" />
+

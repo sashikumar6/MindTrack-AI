@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: mindtrack-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - mindtrack-db:/app/data
+    environment:
+      DATABASE_URL: sqlite:///./data/mindtrack.db
+      TZ: America/Los_Angeles
+
+  frontend:
+    image: node:20-alpine
+    container_name: mindtrack-frontend
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend
+
+volumes:
+  mindtrack-db:

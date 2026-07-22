@@ -5,7 +5,6 @@ const TABS = [
   { to: "/voice", label: "Talk It Out" },
   { to: "/companion", label: "Customize Your Buddy" },
   { to: "/history", label: "History" },
-  { to: "/jobs", label: "Job Tracker" },
   { to: "/settings", label: "Settings" },
 ];
 

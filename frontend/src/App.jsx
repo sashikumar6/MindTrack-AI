@@ -5,7 +5,6 @@ import Login from "./pages/Login.jsx";
 import Overview from "./pages/Overview.jsx";
 import VoiceAgentPage from "./pages/VoiceAgentPage.jsx";
 import HistoryPage from "./pages/HistoryPage.jsx";
-import JobTrackerPage from "./pages/JobTrackerPage.jsx";
 import SettingsPage, { CompanionCustomizer } from "./pages/SettingsPage.jsx";
 import CompanionPage from "./pages/CompanionPage.jsx";
 
@@ -53,7 +52,6 @@ export default function App() {
           >
             <Route index element={<Overview />} />
             <Route path="history" element={<HistoryPage />} />
-            <Route path="jobs" element={<JobTrackerPage />} />
             <Route path="companion" element={<CompanionPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

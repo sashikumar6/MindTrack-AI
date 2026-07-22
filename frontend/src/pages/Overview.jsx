@@ -4,19 +4,11 @@ import { Link } from "react-router-dom";
 import ActivityRings from "../components/ActivityRings.jsx";
 import MoodGraph from "../components/MoodGraph.jsx";
 import Skeleton from "../components/Skeleton.jsx";
-import { fetchJobStats, fetchMoodHistory, fetchMoodStats } from "../lib/api.js";
-
-const JOB_SNAPSHOT = [
-  { key: "applied", label: "Applied", color: "var(--applied-color)" },
-  { key: "interview", label: "Interview", color: "var(--energy-color)" },
-  { key: "rejected", label: "Rejected", color: "var(--rejected-color)" },
-  { key: "ghosted", label: "Ghosted", color: "var(--ghosted-color)" },
-];
+import { fetchMoodHistory, fetchMoodStats } from "../lib/api.js";
 
 export default function Overview() {
   const [stats, setStats] = useState([]);
   const [history, setHistory] = useState([]);
-  const [jobTotals, setJobTotals] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [reflectionOpen, setReflectionOpen] = useState(false);
@@ -25,14 +17,12 @@ export default function Overview() {
     setLoading(true);
     setError(null);
     try {
-      const [moodStats, moodHistory, jobs] = await Promise.all([
+      const [moodStats, moodHistory] = await Promise.all([
         fetchMoodStats(7),
         fetchMoodHistory(30, 30),
-        fetchJobStats().catch(() => null),
       ]);
       setStats(moodStats);
       setHistory(moodHistory);
-      setJobTotals(jobs?.totals ?? null);
     } catch (requestError) {
       setError(requestError.message || "Failed to load your week");
     } finally {
@@ -81,7 +71,7 @@ export default function Overview() {
         </section>
       </div>
 
-      <div className="overview-action-grid">
+      <div className="overview-action-grid overview-action-grid-single">
         <Link to="/voice" className="checkin-card">
           <div className="mini-orb" aria-hidden="true" />
           <div>
@@ -89,18 +79,6 @@ export default function Overview() {
             <p>Two minutes, spoken or typed.</p>
           </div>
           <span className="checkin-arrow" aria-hidden="true"><ArrowRight size={19} /></span>
-        </Link>
-
-        <Link to="/jobs" className="surface job-snapshot-card">
-          <h2>Job search snapshot</h2>
-          <div className="job-snapshot-stats">
-            {JOB_SNAPSHOT.map((item) => (
-              <div key={item.key}>
-                <strong style={{ color: item.color }}>{jobTotals?.[item.key] ?? 0}</strong>
-                <span>{item.label}</span>
-              </div>
-            ))}
-          </div>
         </Link>
       </div>
 

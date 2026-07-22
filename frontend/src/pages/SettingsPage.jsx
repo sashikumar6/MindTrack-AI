@@ -11,7 +11,7 @@ import {
   Play,
   UserRound,
 } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { fetchVoicePreview } from "../lib/api.js";
 import { useAuth } from "../lib/AuthContext.jsx";
 import { companionNameForPersona } from "../lib/companions.js";
@@ -200,8 +200,8 @@ export default function SettingsPage() {
         <h2 id="connections-heading">Connections</h2>
         <div className="basic-setting-row connection-row">
           <span className="basic-setting-icon"><Mail size={18} /></span>
-          <div><strong>Google &amp; Gmail</strong><p>Used for sign-in and job-application tracking.</p></div>
-          <Link to="/jobs">Connected</Link>
+          <div><strong>Google</strong><p>Used for sign-in.</p></div>
+          <span className="connection-status">Connected</span>
         </div>
       </section>
 

@@ -498,6 +498,10 @@ button:focus-visible,
   animation: fadeUp 460ms ease both 150ms;
 }
 
+.overview-action-grid-single {
+  grid-template-columns: 1fr;
+}
+
 .checkin-card,
 .job-snapshot-card {
   min-height: 130px;
@@ -1527,7 +1531,8 @@ button:focus-visible,
   line-height: 1.45;
 }
 
-.connection-row > a {
+.connection-row > a,
+.connection-row > .connection-status {
   padding: 6px 10px;
   color: var(--anxiety-color);
   background: rgba(52, 211, 153, 0.07);

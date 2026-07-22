@@ -1,6 +1,22 @@
-version: "3.9"
-
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mindtrack-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mindtrack
+      POSTGRES_PASSWORD: mindtrack
+      POSTGRES_DB: mindtrack
+    ports:
+      - "5455:5432"
+    volumes:
+      - mindtrack-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mindtrack"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: ./backend
     container_name: mindtrack-backend
@@ -10,10 +26,13 @@ services:
       - .env
     volumes:
       - ./backend:/app
-      - mindtrack-db:/app/data
     environment:
-      DATABASE_URL: sqlite:///./data/mindtrack.db
+      DATABASE_URL: postgresql://mindtrack:mindtrack@postgres:5432/mindtrack
       TZ: America/Los_Angeles
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload"
 
   frontend:
     image: node:20-alpine
@@ -30,4 +49,4 @@ services:
       - backend
 
 volumes:
-  mindtrack-db:
+  mindtrack-postgres-data:

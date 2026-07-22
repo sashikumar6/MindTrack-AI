@@ -45,10 +45,10 @@ export default function JobChart({ data = [] }) {
             contentStyle={TOOLTIP_STYLE}
             cursor={{ fill: "rgba(255,255,255,0.04)" }}
           />
-          <Bar dataKey="applied" stackId="a" fill="#0a84ff" radius={[0, 0, 0, 0]} animationDuration={700} />
-          <Bar dataKey="interview" stackId="a" fill="#ffd60a" radius={[0, 0, 0, 0]} animationDuration={700} animationBegin={80} />
-          <Bar dataKey="rejected" stackId="a" fill="#ff453a" radius={[0, 0, 0, 0]} animationDuration={700} animationBegin={160} />
-          <Bar dataKey="ghosted" stackId="a" fill="#636366" radius={[6, 6, 0, 0]} animationDuration={700} animationBegin={240} />
+          <Bar dataKey="applied" stackId="a" fill="var(--applied-color)" radius={[0, 0, 0, 0]} animationDuration={700} />
+          <Bar dataKey="interview" stackId="a" fill="var(--interview-color)" radius={[0, 0, 0, 0]} animationDuration={700} animationBegin={80} />
+          <Bar dataKey="rejected" stackId="a" fill="var(--rejected-color)" radius={[0, 0, 0, 0]} animationDuration={700} animationBegin={160} />
+          <Bar dataKey="ghosted" stackId="a" fill="var(--ghosted-color)" radius={[6, 6, 0, 0]} animationDuration={700} animationBegin={240} />
         </BarChart>
       </ResponsiveContainer>
     </div>

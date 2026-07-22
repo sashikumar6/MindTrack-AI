@@ -1,22 +1,26 @@
 :root {
-  --bg-primary: #0a0a0a;
-  --bg-card: #141414;
-  --bg-elevated: #1c1c1e;
-  --border: #2c2c2e;
-  --border-soft: rgba(255, 255, 255, 0.06);
-  --text-primary: #f5f5f7;
-  --text-secondary: #86868b;
-  --text-tertiary: #5c5c61;
-  --mood-color: #30d158;
-  --energy-color: #0a84ff;
-  --anxiety-color: #ff453a;
-  --applied-color: #0a84ff;
-  --rejected-color: #ff453a;
-  --interview-color: #ffd60a;
-  --ghosted-color: #636366;
-  --card-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
-    0 12px 32px rgba(0, 0, 0, 0.35);
-  --tooltip-bg: rgba(28, 28, 30, 0.92);
+  --bg-primary: #06070a;
+  --bg-card: #111318;
+  --bg-elevated: #1a1d24;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.04);
+  --text-primary: #f5f6f7;
+  --text-secondary: #9099a8;
+  --text-tertiary: #5c6472;
+  
+  --mood-color: #4da3ff;
+  --energy-color: #fbbf24;
+  --anxiety-color: #34d399;
+  
+  --applied-color: #4da3ff;
+  --interview-color: #fbbf24;
+  --rejected-color: #ff5c5c;
+  --ghosted-color: #5c6472;
+
+  --crisis-color: #a78bfa;
+
+  --card-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  --tooltip-bg: rgba(17, 19, 24, 0.95);
 }
 
 * {
@@ -28,15 +32,10 @@
   to { transform: rotate(360deg); }
 }
 
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); }
-  50% { box-shadow: 0 0 0 6px rgba(48, 209, 88, 0.18); }
-}
-
 @keyframes fadeUp {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(18px);
   }
   to {
     opacity: 1;
@@ -44,14 +43,24 @@
   }
 }
 
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
 }
 
-@keyframes livePulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.9); }
+@keyframes waveBounce {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 html,
@@ -59,34 +68,39 @@ body,
 #root {
   margin: 0;
   padding: 0;
-  min-height: 100%;
+  min-height: 100vh;
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-    "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  background:
-    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(48, 209, 88, 0.05), transparent 70%),
-    radial-gradient(ellipse 80% 50% at 80% 110%, rgba(10, 132, 255, 0.05), transparent 70%),
-    var(--bg-primary);
-  background-attachment: fixed;
+  background: var(--bg-primary);
+}
+
+a {
+  color: var(--mood-color);
+  text-decoration: none;
+}
+a:hover {
+  color: #7dbcff;
 }
 
 button {
   font-family: inherit;
+  cursor: pointer;
 }
 
 button:focus-visible,
 [role="button"]:focus-visible {
-  outline: 2px solid var(--energy-color);
+  outline: 2px solid var(--mood-color);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: rgba(10, 132, 255, 0.4);
+  background: var(--mood-color);
+  color: var(--bg-primary);
 }
 
 .recharts-tooltip-wrapper {

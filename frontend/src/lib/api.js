@@ -1,9 +1,17 @@
 import axios from "axios";
 
+// Same-origin in both dev (via the Vite proxy, see vite.config.js) and prod
+// (FastAPI serves the built frontend itself) -- withCredentials is required
+// either way so the session cookie set by /auth/callback rides along.
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000",
-  timeout: 60_000,
+  baseURL: import.meta.env.VITE_API_URL ?? "",
+  withCredentials: true,
+  timeout: 90_000,
 });
+
+export const fetchMe = () => api.get("/auth/me").then((r) => r.data);
+export const updateMe = (patch) => api.patch("/auth/me", patch).then((r) => r.data);
+export const logout = () => api.post("/auth/logout").then((r) => r.data);
 
 export const fetchJobStats = () => api.get("/jobs/stats").then((r) => r.data);
 export const fetchJobTimeline = (days = 14) =>
@@ -16,12 +24,13 @@ export const fetchMoodStats = (days = 7) =>
   api.get(`/mood/stats?days=${days}`).then((r) => r.data);
 export const fetchMoodHistory = (days = 30, limit = 30) =>
   api.get(`/mood/history?days=${days}&limit=${limit}`).then((r) => r.data);
-export const submitMoodText = (text) =>
-  api.post("/mood/text", { text }).then((r) => r.data);
-export const submitMoodAudio = (blob) => {
-  const form = new FormData();
-  form.append("file", blob, "checkin.webm");
-  return api
-    .post("/mood/audio", form, { headers: { "Content-Type": "multipart/form-data" } })
+
+export const startMoodSession = () =>
+  api.post("/mood/session/start").then((r) => r.data);
+
+export const fetchMoodSessions = (limit = 30, before) =>
+  api
+    .get("/mood/sessions", { params: { limit, before } })
     .then((r) => r.data);
-};
+export const fetchMoodSessionTranscript = (sessionId) =>
+  api.get(`/mood/session/${sessionId}`).then((r) => r.data);

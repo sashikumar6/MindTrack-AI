@@ -1,7 +1,7 @@
 const RINGS = [
-  { key: "mood", color: "#30d158", glow: "rgba(48, 209, 88, 0.45)" },
-  { key: "energy", color: "#0a84ff", glow: "rgba(10, 132, 255, 0.45)" },
-  { key: "anxiety", color: "#ff453a", glow: "rgba(255, 69, 58, 0.45)" },
+  { key: "mood", color: "#4da3ff", glow: "rgba(77, 163, 255, 0.45)" },
+  { key: "energy", color: "#fbbf24", glow: "rgba(251, 191, 36, 0.45)" },
+  { key: "anxiety", color: "#34d399", glow: "rgba(52, 211, 153, 0.45)" },
 ];
 
 export default function ActivityRings({

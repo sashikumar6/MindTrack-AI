@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Any, TypedDict
+from typing import Any, AsyncIterator, TypedDict
 
 from openai import AsyncOpenAI
 from sqlalchemy import select
@@ -13,6 +13,8 @@ from sqlalchemy import select
 from config.settings import settings
 from db.database import get_session
 from db.models import MoodEntry
+from agents.personas import DEFAULT_PERSONA, persona_directive
+from agents.safety import CRISIS_RESPONSE, contains_crisis_language
 from voice.elevenlabs_tts import synthesize
 
 logger = logging.getLogger(__name__)
@@ -28,7 +30,11 @@ class MoodData(TypedDict):
 
 EXTRACTOR_SYSTEM_PROMPT = (
     "You are a mental health data extractor. Extract structured data from this "
-    "daily voice check-in. Return JSON only, nothing else.\n"
+    "daily voice check-in. This is a non-clinical wellness score, not a diagnosis. "
+    "Use the full scale consistently: 1 means extremely low/calm/exhausted, 5 means "
+    "ordinary or neutral, and 10 means exceptionally positive/energized/intensely "
+    "anxious. Score only evidence present in the transcript. Return JSON only, "
+    "nothing else.\n"
     "{\n"
     '  "mood_score": 1-10,\n'
     '  "energy_level": 1-10,\n'
@@ -51,12 +57,16 @@ _openai: AsyncOpenAI | None = None
 def _client() -> AsyncOpenAI:
     global _openai
     if _openai is None:
-        _openai = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        _openai = AsyncOpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS,
+            max_retries=2,
+        )
     return _openai
 
 
 def _extractor_model() -> str:
-    return settings.OPENAI_FINETUNED_MODEL or "gpt-4o"
+    return settings.OPENAI_FINETUNED_MODEL or settings.MOOD_EXTRACTOR_MODEL
 
 
 def _clamp(value: Any, lo: int = 1, hi: int = 10) -> int:
@@ -100,7 +110,9 @@ async def extract_mood(transcript: str) -> MoodData:
     }
 
 
-def _recent_average(days: int = 3) -> dict[str, float | None]:
+def _recent_average(user_id: int | None, days: int = 3) -> dict[str, float | None]:
+    if user_id is None:
+        return {"mood": None, "energy": None, "anxiety": None}
     cutoff = datetime.utcnow() - timedelta(days=days)
     with get_session() as session:
         rows = (
@@ -109,7 +121,7 @@ def _recent_average(days: int = 3) -> dict[str, float | None]:
                     MoodEntry.mood_score,
                     MoodEntry.energy_level,
                     MoodEntry.anxiety_level,
-                ).where(MoodEntry.created_at >= cutoff)
+                ).where(MoodEntry.user_id == user_id, MoodEntry.created_at >= cutoff)
             )
             .all()
         )
@@ -123,7 +135,25 @@ def _recent_average(days: int = 3) -> dict[str, float | None]:
     }
 
 
-async def generate_coach_response(mood: MoodData, recent_avg: dict[str, float | None]) -> str:
+async def generate_coach_response(
+    mood: MoodData,
+    recent_avg: dict[str, float | None],
+    persona: str = DEFAULT_PERSONA,
+) -> str:
+    resp = await _client().chat.completions.create(
+        model=settings.COACH_MODEL,
+        temperature=0.7,
+        max_tokens=200,
+        messages=_coach_messages(mood, recent_avg, persona),
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def _coach_messages(
+    mood: MoodData,
+    recent_avg: dict[str, float | None],
+    persona: str = DEFAULT_PERSONA,
+) -> list[dict[str, str]]:
     user_payload = {
         "current_entry": {
             "mood_score": mood["mood_score"],
@@ -133,42 +163,91 @@ async def generate_coach_response(mood: MoodData, recent_avg: dict[str, float | 
         },
         "last_3_days_average": recent_avg,
     }
-    resp = await _client().chat.completions.create(
-        model="gpt-4o",
+    sys = COACH_SYSTEM_PROMPT + "\n\n" + persona_directive(persona)
+    return [
+        {"role": "system", "content": sys},
+        {"role": "user", "content": json.dumps(user_payload)},
+    ]
+
+
+async def stream_coach_response(
+    mood: MoodData,
+    recent_avg: dict[str, float | None],
+    persona: str = DEFAULT_PERSONA,
+) -> AsyncIterator[str]:
+    """Token-stream the same coach response as generate_coach_response, for
+    low-latency sentence-chunked TTS playback (see agents.text_stream and
+    mood_conversation.process_turn_streaming). This is plain prose -- no
+    response_format -- so unlike the conversation agent's JSON-mode decide
+    call, it's safe to sentence-split as it streams."""
+    stream = await _client().chat.completions.create(
+        model=settings.COACH_MODEL,
         temperature=0.7,
         max_tokens=200,
-        messages=[
-            {"role": "system", "content": COACH_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(user_payload)},
-        ],
+        messages=_coach_messages(mood, recent_avg, persona),
+        stream=True,
     )
-    return (resp.choices[0].message.content or "").strip()
+    async for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
 
 
-async def run_mood_pipeline(transcript: str) -> dict[str, Any]:
+async def run_mood_pipeline(
+    transcript: str,
+    user_id: int | None = None,
+    persona: str = DEFAULT_PERSONA,
+    voice: str | None = None,
+) -> dict[str, Any]:
+    """Run the one-shot (non-conversational) check-in pipeline.
+
+    `user_id` is None for anonymous/demo callers: the entry is never
+    persisted and no cross-session memory is used, matching the public
+    demo's ephemeral/privacy-preserving behavior. Logged-in users always get
+    persistent history regardless of the DEMO_MODE setting.
+    """
     transcript = transcript.strip()
     if not transcript:
         raise ValueError("Empty transcript")
 
-    mood = await extract_mood(transcript)
-    recent = _recent_average()
-    response_text = await generate_coach_response(mood, recent)
-    audio_bytes = await synthesize(response_text)
+    crisis = contains_crisis_language(transcript)
+    mood = (
+        {
+            "mood_score": 1,
+            "energy_level": 1,
+            "anxiety_level": 10,
+            "keywords": ["immediate safety concern"],
+            "summary": "The check-in contains language indicating a possible immediate safety concern.",
+        }
+        if crisis
+        else await extract_mood(transcript)
+    )
+    recent = _recent_average(user_id)
+    response_text = (
+        CRISIS_RESPONSE if crisis else await generate_coach_response(mood, recent, persona)
+    )
+    audio_bytes = await synthesize(response_text, voice=voice)
 
-    with get_session() as session:
-        entry = MoodEntry(
-            raw_transcript=transcript,
-            mood_score=mood["mood_score"],
-            energy_level=mood["energy_level"],
-            anxiety_level=mood["anxiety_level"],
-            keywords=",".join(mood["keywords"]),
-            summary=mood["summary"],
-            agent_response=response_text,
-        )
-        session.add(entry)
-        session.flush()
-        entry_id = entry.id
-        created_at = entry.created_at
+    entry_id = None
+    created_at = datetime.utcnow()
+    if user_id is not None:
+        with get_session() as session:
+            entry = MoodEntry(
+                user_id=user_id,
+                raw_transcript=transcript,
+                mood_score=mood["mood_score"],
+                energy_level=mood["energy_level"],
+                anxiety_level=mood["anxiety_level"],
+                keywords=",".join(mood["keywords"]),
+                summary=mood["summary"],
+                agent_response=response_text,
+            )
+            session.add(entry)
+            session.flush()
+            entry_id = entry.id
+            created_at = entry.created_at
 
     return {
         "id": entry_id,
@@ -182,4 +261,5 @@ async def run_mood_pipeline(transcript: str) -> dict[str, Any]:
         "agent_response": response_text,
         "audio_b64": base64.b64encode(audio_bytes).decode("ascii") if audio_bytes else "",
         "recent_average": recent,
+        "safety_event": crisis,
     }

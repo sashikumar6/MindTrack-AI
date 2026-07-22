@@ -129,22 +129,28 @@ async def classify_email(subject: str, snippet: str) -> ClassifiedEmail:
     }
 
 
-async def scan_gmail(since_days: int = 7) -> int:
-    """Scan recent Gmail, classify, persist new rows. Returns count added.
+async def scan_gmail(user_id: int, since_days: int = 7) -> int:
+    """Scan one user's recent Gmail, classify, persist new rows. Returns count added.
 
     `since_days` bounds the search via Gmail's `newer_than` operator so daily
     runs stay fast and don't re-process the entire mailbox. Defaults to 7d
-    (one-week safety window; dedup on email subject handles overlap).
+    (one-week safety window; dedup on (user_id, email_id) handles overlap).
     """
     with get_session() as session:
         seen = {
-            eid for eid in session.execute(select(JobMetric.email_id)).scalars().all() if eid
+            eid
+            for eid in session.execute(
+                select(JobMetric.email_id).where(JobMetric.user_id == user_id)
+            )
+            .scalars()
+            .all()
+            if eid
         }
 
     window = f"newer_than:{max(1, since_days)}d"
     new_rows: list[JobMetric] = []
     for query in SEARCH_QUERIES:
-        messages = await search_messages(f"{query} {window}")
+        messages = await search_messages(user_id, f"{query} {window}")
         for msg in messages:
             email_id = msg.get("id", "").strip()
             subject = msg.get("subject", "").strip()
@@ -167,6 +173,7 @@ async def scan_gmail(since_days: int = 7) -> int:
 
             new_rows.append(
                 JobMetric(
+                    user_id=user_id,
                     email_id=email_id,
                     company=cls["company"],
                     job_title=cls["job_title"],
@@ -183,17 +190,18 @@ async def scan_gmail(since_days: int = 7) -> int:
         with get_session() as session:
             session.add_all(new_rows)
 
-    await mark_ghosted()
+    await mark_ghosted(user_id)
     return len(new_rows)
 
 
-async def mark_ghosted(threshold_days: int = GHOSTED_THRESHOLD_DAYS) -> int:
-    """Flag stale 'applied' rows with no response as 'ghosted'. Returns rows updated."""
+async def mark_ghosted(user_id: int, threshold_days: int = GHOSTED_THRESHOLD_DAYS) -> int:
+    """Flag one user's stale 'applied' rows with no response as 'ghosted'. Returns rows updated."""
     cutoff = date.today() - timedelta(days=threshold_days)
     with get_session() as session:
         stale = (
             session.execute(
                 select(JobMetric).where(
+                    JobMetric.user_id == user_id,
                     JobMetric.status == "applied",
                     JobMetric.applied_date.is_not(None),
                     JobMetric.applied_date <= cutoff,

@@ -1,7 +1,8 @@
-"""Upload training_data.jsonl, run an OpenAI fine-tune, write the model id back to .env."""
+"""Run an explicitly confirmed fine-tune using prepared train/validation files."""
 from __future__ import annotations
 
 import asyncio
+import argparse
 import logging
 import time
 from pathlib import Path
@@ -12,8 +13,8 @@ from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-TRAINING_FILE = Path(__file__).parent / "training_data.jsonl"
-BASE_MODEL = "gpt-4o-mini-2024-07-18"
+TRAINING_FILE = Path(__file__).parent / "training_split.jsonl"
+VALIDATION_FILE = Path(__file__).parent / "validation_data.jsonl"
 POLL_INTERVAL_SECONDS = 30
 MIN_EXAMPLES = 10
 TERMINAL_FAIL = {"failed", "cancelled"}
@@ -55,7 +56,11 @@ def _write_to_env(model_id: str) -> Path:
 async def run_finetune() -> str:
     if not TRAINING_FILE.exists():
         raise FileNotFoundError(
-            f"{TRAINING_FILE} not found. Run generate_training_data.py first."
+            f"{TRAINING_FILE} not found. Run prepare_dataset.py first."
+        )
+    if not VALIDATION_FILE.exists():
+        raise FileNotFoundError(
+            f"{VALIDATION_FILE} not found. Run prepare_dataset.py first."
         )
     count = _line_count(TRAINING_FILE)
     if count < MIN_EXAMPLES:
@@ -71,9 +76,15 @@ async def run_finetune() -> str:
         file_obj = await client.files.create(file=fh, purpose="fine-tune")
     print(f"  → file id: {file_obj.id}")
 
-    print(f"Creating fine-tune job on {BASE_MODEL}…")
+    with VALIDATION_FILE.open("rb") as fh:
+        validation_obj = await client.files.create(file=fh, purpose="fine-tune")
+    print(f"  → validation file id: {validation_obj.id}")
+
+    print(f"Creating fine-tune job on {settings.FINE_TUNE_BASE_MODEL}…")
     job = await client.fine_tuning.jobs.create(
-        training_file=file_obj.id, model=BASE_MODEL
+        training_file=file_obj.id,
+        validation_file=validation_obj.id,
+        model=settings.FINE_TUNE_BASE_MODEL,
     )
     job_id = job.id
     print(f"  → job id: {job_id}")
@@ -102,4 +113,13 @@ async def run_finetune() -> str:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Acknowledge that this creates a billable external training job.",
+    )
+    args = parser.parse_args()
+    if not args.confirm:
+        parser.error("Fine-tuning is billable. Re-run with --confirm after reviewing evals.")
     print(asyncio.run(run_finetune()))

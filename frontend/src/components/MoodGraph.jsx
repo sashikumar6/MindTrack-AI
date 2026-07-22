@@ -26,16 +26,16 @@ export default function MoodGraph({ data = [] }) {
         <AreaChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
           <defs>
             <linearGradient id="grad-mood" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#30d158" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="#30d158" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--mood-color)" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="var(--mood-color)" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="grad-energy" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#0a84ff" stopOpacity={0.25} />
-              <stop offset="100%" stopColor="#0a84ff" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--energy-color)" stopOpacity={0.25} />
+              <stop offset="100%" stopColor="var(--energy-color)" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="grad-anxiety" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#ff453a" stopOpacity={0.2} />
-              <stop offset="100%" stopColor="#ff453a" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--anxiety-color)" stopOpacity={0.2} />
+              <stop offset="100%" stopColor="var(--anxiety-color)" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
@@ -61,7 +61,7 @@ export default function MoodGraph({ data = [] }) {
           <Area
             type="monotone"
             dataKey="mood"
-            stroke="#30d158"
+            stroke="var(--mood-color)"
             strokeWidth={2}
             fill="url(#grad-mood)"
             dot={false}
@@ -72,7 +72,7 @@ export default function MoodGraph({ data = [] }) {
           <Area
             type="monotone"
             dataKey="energy"
-            stroke="#0a84ff"
+            stroke="var(--energy-color)"
             strokeWidth={2}
             fill="url(#grad-energy)"
             dot={false}
@@ -84,7 +84,7 @@ export default function MoodGraph({ data = [] }) {
           <Area
             type="monotone"
             dataKey="anxiety"
-            stroke="#ff453a"
+            stroke="var(--anxiety-color)"
             strokeWidth={2}
             fill="url(#grad-anxiety)"
             dot={false}

@@ -172,8 +172,8 @@ function timeAgo(iso) {
 const panel = {
   background: "var(--bg-card)",
   border: "1px solid var(--border)",
-  borderRadius: 16,
-  padding: 24,
+  borderRadius: 18,
+  padding: 26,
   boxShadow: "var(--card-shadow)",
 };
 const panelHeader = {
@@ -266,7 +266,7 @@ const emptyState = {
 const errorBox = {
   marginTop: 12,
   padding: 10,
-  background: "rgba(255,69,58,0.08)",
+  background: "rgba(255,92,92,0.08)",
   border: "1px solid var(--rejected-color)",
   borderRadius: 8,
   color: "var(--rejected-color)",

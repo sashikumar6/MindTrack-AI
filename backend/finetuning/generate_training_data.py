@@ -1,4 +1,4 @@
-"""Generate 100 synthetic mood-extraction training examples via GPT-4o."""
+"""Generate a balanced synthetic mood-extraction dataset via a teacher model."""
 from __future__ import annotations
 
 import asyncio
@@ -16,20 +16,27 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 OUTPUT_PATH = Path(__file__).parent / "training_data.jsonl"
-TARGET_EXAMPLES = 100
+RAW_OUTPUT_PATH = Path(__file__).parent / "generated_examples.jsonl"
+TARGET_EXAMPLES = 140
 CONCURRENCY = 5
 RETRIES_PER_SLOT = 2
 GENERATOR_MODEL = "gpt-4o"
 
 SCENARIOS: list[str] = [
-    "good day - rested, productive, things clicking into place",
-    "bad day - low mood, dragging through tasks, hard to start",
-    "anxious day - racing thoughts, worried about something specific",
-    "burnt out - exhausted, overwhelmed, considering taking a break",
-    "hopeful day - cautiously optimistic, momentum building",
-    "interview day - nervous excitement, prep mode, jittery",
-    "post-rejection - disappointed but processing, mixed feelings",
-    "neutral day - nothing special, routine, just going through motions",
+    "excellent day; target mood 9-10, energy 8-10, anxiety 1-3",
+    "good productive day; target mood 7-9, energy 7-9, anxiety 1-4",
+    "neutral routine day; target mood 4-6, energy 4-6, anxiety 3-5",
+    "very low non-crisis day; target mood 1-2, energy 1-3, anxiety 4-8",
+    "bad low-motivation day; target mood 2-4, energy 2-4, anxiety 3-7",
+    "burnout and overload; target mood 2-4, energy 1-3, anxiety 6-9",
+    "calm restorative day; target mood 6-8, energy 3-6, anxiety 1-2",
+    "panic-level but non-crisis anxiety; target mood 2-5, energy 3-8, anxiety 9-10",
+    "hopeful recovery day; target mood 6-8, energy 5-8, anxiety 3-6",
+    "interview nerves and excitement; target mood 5-8, energy 6-9, anxiety 6-9",
+    "post-rejection mixed feelings; target mood 3-5, energy 3-6, anxiety 4-7",
+    "mixed high-energy bad mood; target mood 2-4, energy 7-9, anxiety 6-9",
+    "mixed low-energy good mood; target mood 7-9, energy 1-3, anxiety 1-4",
+    "ambiguous short check-in requiring conservative scores near 4-6",
 ]
 
 GENERATOR_SYSTEM_PROMPT = """You are creating synthetic training data for a mental health voice check-in extractor.
@@ -44,9 +51,12 @@ The transcript MUST:
 - be 1-4 sentences total
 - reference believable details (work, applications, sleep, friends, food, exercise, weather)
 - vary in topic — don't always mention applications
+- never include suicidal, self-harm, or immediate-danger language; that is handled by a separate safety layer
 
 The extraction MUST accurately reflect the transcript:
 - mood_score, energy_level, anxiety_level: integers 1-10
+- follow the target score ranges in the scenario unless the transcript clearly supports a nearby value
+- use the full scale: 1 is extreme low/calm/exhausted, 5 is ordinary/neutral, 10 is exceptional/intense
 - keywords: 2-4 short phrases pulled from or paraphrasing the transcript
 - summary: one short sentence
 
@@ -110,7 +120,11 @@ async def _generate_one(client: AsyncOpenAI, scenario: str) -> dict[str, Any] | 
             transcript = (data.get("transcript") or "").strip()
             extraction = data.get("extraction")
             if _valid_extraction(transcript, extraction):
-                return {"transcript": transcript, "extraction": extraction}
+                return {
+                    "scenario": scenario,
+                    "transcript": transcript,
+                    "extraction": extraction,
+                }
         except Exception as exc:
             logger.warning("generation attempt %d failed (%s): %s", attempt + 1, scenario[:40], exc)
             await asyncio.sleep(0.5 * (attempt + 1))
@@ -140,6 +154,9 @@ async def generate() -> None:
         await asyncio.gather(*(worker(s) for s in batch))
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with RAW_OUTPUT_PATH.open("w") as fh:
+        for example in results[:TARGET_EXAMPLES]:
+            fh.write(json.dumps(example, ensure_ascii=False) + "\n")
     with OUTPUT_PATH.open("w") as fh:
         for example in results[:TARGET_EXAMPLES]:
             line = {
@@ -151,6 +168,7 @@ async def generate() -> None:
             }
             fh.write(json.dumps(line, ensure_ascii=False) + "\n")
     print(f"\nWrote {len(results[:TARGET_EXAMPLES])} examples → {OUTPUT_PATH}")
+    print(f"Wrote labeled generation metadata → {RAW_OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

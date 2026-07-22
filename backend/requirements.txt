@@ -5,11 +5,14 @@ sqlalchemy
 apscheduler
 pydantic-settings
 python-multipart
-openai-whisper
 elevenlabs
 httpx
 google-api-python-client
 google-auth
 google-auth-oauthlib
 cryptography<44
+authlib
+itsdangerous
+alembic
+psycopg2-binary
 pytest

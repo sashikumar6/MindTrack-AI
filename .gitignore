@@ -1,8 +1,10 @@
 .env
-.env.example
+!.env.example
+client_secret.json
 backend/credentials/*.json
 backend/.venv/
 __pycache__/
 *.pyc
 node_modules/
+dist/
 *.db

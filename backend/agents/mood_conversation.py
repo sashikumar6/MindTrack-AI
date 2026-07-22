@@ -13,7 +13,13 @@ from config.settings import settings
 from db.database import get_session
 from db.models import ConversationTurn, MoodEntry, MoodSession
 from agents.mood_agent import extract_mood, generate_coach_response, stream_coach_response
-from agents.personas import DEFAULT_PERSONA, persona_directive
+from agents.personas import (
+    DEFAULT_CONVERSATION_MODE,
+    DEFAULT_PERSONA,
+    companion_name,
+    conversation_mode_directive,
+    persona_directive,
+)
 from agents.safety import CRISIS_RESPONSE, contains_crisis_language
 from agents.text_stream import sentence_stream
 
@@ -110,6 +116,7 @@ def _build_messages(
     turns: list[dict[str, str]],
     turn_number: int,
     persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> list[dict[str, str]]:
     memory_block = (
         "Recent check-ins (most recent first):\n"
@@ -118,8 +125,10 @@ def _build_messages(
         else "Recent check-ins: none — this is one of their first sessions."
     )
     sys = (
-        CONVERSATION_SYSTEM_PROMPT
+        f"Your name is {companion_name(persona)}.\n\n"
+        + CONVERSATION_SYSTEM_PROMPT
         + "\n\n" + persona_directive(persona)
+        + "\n\n" + conversation_mode_directive(conversation_mode)
         + f"\n\nThis is user turn {turn_number} of at most {MAX_TURNS}."
         + f" {'You MUST finalize now.' if turn_number >= MAX_TURNS else ''}"
         + "\n\n" + memory_block
@@ -136,13 +145,14 @@ async def _decide(
     turns: list[dict[str, str]],
     turn_number: int,
     persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> AgentDecision:
     resp = await _client().chat.completions.create(
         model=settings.CONVERSATION_MODEL,
         response_format={"type": "json_object"},
         temperature=0.6,
         max_tokens=300,
-        messages=_build_messages(history, turns, turn_number, persona),
+        messages=_build_messages(history, turns, turn_number, persona, conversation_mode),
     )
     raw = resp.choices[0].message.content or "{}"
     try:
@@ -218,7 +228,9 @@ def _purge_demo_session(session_id: int, entry_id: int) -> None:
 
 
 async def start_session(
-    user_id: int | None = None, persona: str = DEFAULT_PERSONA
+    user_id: int | None = None,
+    persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> dict[str, Any]:
     """Open a new conversation. Agent greets the user, optionally referencing recent history."""
     history = _recent_history(user_id)
@@ -228,7 +240,13 @@ async def start_session(
         session.flush()
         session_id = sess.id
 
-    decision = await _decide(history, turns=[], turn_number=0, persona=persona)
+    decision = await _decide(
+        history,
+        turns=[],
+        turn_number=0,
+        persona=persona,
+        conversation_mode=conversation_mode,
+    )
     # The opener should always be an "ask" — coerce if model picks finalize on an empty session.
     # No user message exists yet to read a vibe from, so the opener is always "calm".
     if decision["action"] == "finalize":
@@ -238,9 +256,13 @@ async def start_session(
             "reasoning": "opener fallback",
             "vibe": DEFAULT_VIBE,
         }
+    name = companion_name(persona)
+    if name.casefold() not in decision["message"].casefold():
+        decision = {**decision, "message": f"Hi, I'm {name}. {decision['message']}"}
     _persist_turn(session_id, "agent", decision["message"])
     return {
         "session_id": session_id,
+        "agent_name": name,
         "agent_message": decision["message"],
         "status": "active",
         "vibe": DEFAULT_VIBE,
@@ -252,6 +274,7 @@ async def process_turn(
     user_message: str,
     user_id: int | None = None,
     persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> dict[str, Any]:
     """User just spoke. Agent decides: ask follow-up, or finalize and extract mood."""
     sess = _get_session_row(session_id)
@@ -278,7 +301,9 @@ async def process_turn(
             "vibe": "tense",
         }
     else:
-        decision = await _decide(history, turns, user_turn_count, persona)
+        decision = await _decide(
+            history, turns, user_turn_count, persona, conversation_mode
+        )
 
     if decision["action"] == "ask":
         _persist_turn(session_id, "agent", decision["message"])
@@ -311,7 +336,9 @@ async def process_turn(
     else:
         try:
             recent_avg = _recent_average_from_history(history)
-            closing = await generate_coach_response(mood, recent_avg, persona)
+            closing = await generate_coach_response(
+                mood, recent_avg, persona, conversation_mode
+            )
         except Exception as exc:
             logger.warning("Coach response failed in finalize, using agent message: %s", exc)
             closing = decision["message"]
@@ -383,6 +410,7 @@ async def process_turn_streaming(
     user_message: str,
     user_id: int | None = None,
     persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> AsyncIterator[dict[str, Any]]:
     """Same turn logic as process_turn, but yields incremental events so a
     WebSocket route can forward text -- and, per sentence, synthesized audio
@@ -424,7 +452,9 @@ async def process_turn_streaming(
             "vibe": "tense",
         }
     else:
-        decision = await _decide(history, turns, user_turn_count, persona)
+        decision = await _decide(
+            history, turns, user_turn_count, persona, conversation_mode
+        )
 
     yield {"type": "vibe", "vibe": decision.get("vibe", DEFAULT_VIBE)}
 
@@ -465,7 +495,9 @@ async def process_turn_streaming(
         recent_avg = _recent_average_from_history(history)
         parts: list[str] = []
         try:
-            async for sentence in sentence_stream(stream_coach_response(mood, recent_avg, persona)):
+            async for sentence in sentence_stream(
+                stream_coach_response(mood, recent_avg, persona, conversation_mode)
+            ):
                 parts.append(sentence)
                 yield {"type": "text_delta", "text": sentence}
             closing = " ".join(parts).strip()
@@ -473,7 +505,9 @@ async def process_turn_streaming(
                 raise ValueError("streamed coach response was empty")
         except Exception as exc:
             logger.warning("Streaming coach response failed, falling back: %s", exc)
-            closing = await generate_coach_response(mood, recent_avg, persona)
+            closing = await generate_coach_response(
+                mood, recent_avg, persona, conversation_mode
+            )
             yield {"type": "text_delta", "text": closing}
 
     result = _persist_finalize(session_id, user_id, user_text, mood, closing, crisis)

@@ -13,7 +13,13 @@ from sqlalchemy import select
 from config.settings import settings
 from db.database import get_session
 from db.models import MoodEntry
-from agents.personas import DEFAULT_PERSONA, persona_directive
+from agents.personas import (
+    DEFAULT_CONVERSATION_MODE,
+    DEFAULT_PERSONA,
+    companion_name,
+    conversation_mode_directive,
+    persona_directive,
+)
 from agents.safety import CRISIS_RESPONSE, contains_crisis_language
 from voice.elevenlabs_tts import synthesize
 
@@ -139,12 +145,13 @@ async def generate_coach_response(
     mood: MoodData,
     recent_avg: dict[str, float | None],
     persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> str:
     resp = await _client().chat.completions.create(
         model=settings.COACH_MODEL,
         temperature=0.7,
         max_tokens=200,
-        messages=_coach_messages(mood, recent_avg, persona),
+        messages=_coach_messages(mood, recent_avg, persona, conversation_mode),
     )
     return (resp.choices[0].message.content or "").strip()
 
@@ -153,6 +160,7 @@ def _coach_messages(
     mood: MoodData,
     recent_avg: dict[str, float | None],
     persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> list[dict[str, str]]:
     user_payload = {
         "current_entry": {
@@ -163,7 +171,12 @@ def _coach_messages(
         },
         "last_3_days_average": recent_avg,
     }
-    sys = COACH_SYSTEM_PROMPT + "\n\n" + persona_directive(persona)
+    sys = (
+        f"Your name is {companion_name(persona)}.\n\n"
+        + COACH_SYSTEM_PROMPT
+        + "\n\n" + persona_directive(persona)
+        + "\n\n" + conversation_mode_directive(conversation_mode)
+    )
     return [
         {"role": "system", "content": sys},
         {"role": "user", "content": json.dumps(user_payload)},
@@ -174,6 +187,7 @@ async def stream_coach_response(
     mood: MoodData,
     recent_avg: dict[str, float | None],
     persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> AsyncIterator[str]:
     """Token-stream the same coach response as generate_coach_response, for
     low-latency sentence-chunked TTS playback (see agents.text_stream and
@@ -184,7 +198,7 @@ async def stream_coach_response(
         model=settings.COACH_MODEL,
         temperature=0.7,
         max_tokens=200,
-        messages=_coach_messages(mood, recent_avg, persona),
+        messages=_coach_messages(mood, recent_avg, persona, conversation_mode),
         stream=True,
     )
     async for chunk in stream:
@@ -200,6 +214,7 @@ async def run_mood_pipeline(
     user_id: int | None = None,
     persona: str = DEFAULT_PERSONA,
     voice: str | None = None,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> dict[str, Any]:
     """Run the one-shot (non-conversational) check-in pipeline.
 
@@ -226,7 +241,9 @@ async def run_mood_pipeline(
     )
     recent = _recent_average(user_id)
     response_text = (
-        CRISIS_RESPONSE if crisis else await generate_coach_response(mood, recent, persona)
+        CRISIS_RESPONSE
+        if crisis
+        else await generate_coach_response(mood, recent, persona, conversation_mode)
     )
     audio_bytes = await synthesize(response_text, voice=voice)
 

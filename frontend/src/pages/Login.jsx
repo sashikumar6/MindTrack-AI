@@ -1,4 +1,5 @@
 import { useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 const ERROR_MESSAGES = {
   oauth_failed: "Google sign-in didn't complete. Please try again.",
@@ -30,6 +31,8 @@ export default function Login() {
         <GoogleIcon />
         Continue with Google
       </a>
+
+      <Link to="/voice" style={anonymousLink}>Try without signing in →</Link>
 
       <p style={fineprint}>
         We request Gmail read access at sign-in so job-application emails
@@ -125,6 +128,11 @@ const fineprint = {
   fontSize: 11,
   lineHeight: 1.5,
   maxWidth: 420,
+};
+const anonymousLink = {
+  marginTop: 20,
+  color: "var(--text-secondary)",
+  fontSize: 14,
 };
 const errorBox = {
   marginBottom: 20,

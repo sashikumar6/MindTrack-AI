@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import ChatBubble from "./ChatBubble.jsx";
 import VoiceWaveform from "./VoiceWaveform.jsx";
 import { startMoodSession } from "../lib/api.js";
+import { companionNameForPersona } from "../lib/companions.js";
 import { DEFAULT_VIBE, VIBE_STYLES } from "../lib/vibe.js";
 
 // States:
@@ -20,7 +20,7 @@ import { DEFAULT_VIBE, VIBE_STYLES } from "../lib/vibe.js";
 // is generated, and each sentence's audio starts playing as soon as it's
 // synthesized, instead of waiting for the whole reply to finish generating
 // and downloading before anything appears.
-export default function VoiceSession({ onComplete }) {
+export default function VoiceSession({ onComplete, personaMode = "empathetic" }) {
   const [state, setState] = useState("idle");
   const [turns, setTurns] = useState([]); // [{role: 'agent'|'user', text}]
   const [error, setError] = useState(null);
@@ -29,6 +29,7 @@ export default function VoiceSession({ onComplete }) {
   const [playbackAnalyser, setPlaybackAnalyser] = useState(null);
   const [vibe, setVibe] = useState(DEFAULT_VIBE);
   const [result, setResult] = useState(null); // last turn_done payload, for the summary/crisis card
+  const [agentName, setAgentName] = useState(() => companionNameForPersona(personaMode));
 
   const wsRef = useRef(null);
   const recorderRef = useRef(null);
@@ -36,13 +37,21 @@ export default function VoiceSession({ onComplete }) {
   const micStreamRef = useRef(null);
   const audioCtxRef = useRef(null);
   const openerAudioRef = useRef(null);
+  const speechRef = useRef(null);
+  const vadFrameRef = useRef(null);
+  const startingRecordingRef = useRef(false);
 
   const pendingAudioBytesRef = useRef([]); // Uint8Array[] for the sentence in flight
-  const audioQueueRef = useRef([]); // object URLs waiting to play, in order
+  const pendingSentenceTextRef = useRef("");
+  const audioQueueRef = useRef([]); // {type: 'audio'|'speech', url?|text?}[]
   const isPlayingRef = useRef(false);
   const pendingTurnDoneRef = useRef(null);
 
   useEffect(() => () => cleanup(), []);
+
+  useEffect(() => {
+    if (state === "idle") setAgentName(companionNameForPersona(personaMode));
+  }, [personaMode, state]);
 
   const ensureAudioCtx = () => {
     if (!audioCtxRef.current) {
@@ -56,6 +65,11 @@ export default function VoiceSession({ onComplete }) {
   };
 
   const cleanup = () => {
+    if (vadFrameRef.current) {
+      cancelAnimationFrame(vadFrameRef.current);
+      vadFrameRef.current = null;
+    }
+    startingRecordingRef.current = false;
     if (wsRef.current) {
       try {
         wsRef.current.close();
@@ -81,15 +95,24 @@ export default function VoiceSession({ onComplete }) {
       }
       openerAudioRef.current = null;
     }
-    audioQueueRef.current.forEach((url) => {
-      try {
-        URL.revokeObjectURL(url);
-      } catch {
-        /* already revoked */
+    if (speechRef.current) {
+      speechRef.current.onend = null;
+      speechRef.current.onerror = null;
+      speechRef.current = null;
+    }
+    window.speechSynthesis?.cancel();
+    audioQueueRef.current.forEach((item) => {
+      if (item.type === "audio" && item.url) {
+        try {
+          URL.revokeObjectURL(item.url);
+        } catch {
+          /* already revoked */
+        }
       }
     });
     audioQueueRef.current = [];
     pendingAudioBytesRef.current = [];
+    pendingSentenceTextRef.current = "";
     pendingTurnDoneRef.current = null;
     isPlayingRef.current = false;
     setPlaybackAnalyser(null);
@@ -107,19 +130,26 @@ export default function VoiceSession({ onComplete }) {
       if (payload.mood_entry && !payload.safety_event) onComplete?.(payload.mood_entry);
     } else {
       setState("recording-ready");
+      window.setTimeout(() => startRecording(), 180);
     }
   };
 
   const playNextInQueue = () => {
-    const url = audioQueueRef.current.shift();
-    if (!url) {
+    const item = audioQueueRef.current.shift();
+    if (!item) {
       isPlayingRef.current = false;
       setPlaybackAnalyser(null);
       if (pendingTurnDoneRef.current) applyPendingTurnDone();
       return;
     }
     isPlayingRef.current = true;
-    const audio = new Audio(url);
+    if (item.type === "speech") {
+      setPlaybackAnalyser(null);
+      playDeviceSpeech(item.text, agentName, speechRef).then(playNextInQueue);
+      return;
+    }
+
+    const audio = new Audio(item.url);
     try {
       const ctx = ensureAudioCtx();
       const source = ctx.createMediaElementSource(audio);
@@ -132,7 +162,7 @@ export default function VoiceSession({ onComplete }) {
       // Web Audio graph unavailable -- audio still plays, just no waveform.
     }
     const advance = () => {
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(item.url);
       playNextInQueue();
     };
     audio.onended = advance;
@@ -150,6 +180,7 @@ export default function VoiceSession({ onComplete }) {
         break;
       case "text_delta":
         setState("agent");
+        pendingSentenceTextRef.current = msg.text;
         setTurns((prev) => [...prev, { role: "agent", text: msg.text }]);
         break;
       case "audio_chunk": {
@@ -160,10 +191,14 @@ export default function VoiceSession({ onComplete }) {
       case "sentence_done": {
         const blob = new Blob(pendingAudioBytesRef.current, { type: "audio/mpeg" });
         pendingAudioBytesRef.current = [];
+        const sentence = pendingSentenceTextRef.current;
+        pendingSentenceTextRef.current = "";
         if (blob.size > 0) {
-          audioQueueRef.current.push(URL.createObjectURL(blob));
-          if (!isPlayingRef.current) playNextInQueue();
+          audioQueueRef.current.push({ type: "audio", url: URL.createObjectURL(blob) });
+        } else if (sentence) {
+          audioQueueRef.current.push({ type: "speech", text: sentence });
         }
+        if (!isPlayingRef.current && audioQueueRef.current.length > 0) playNextInQueue();
         break;
       }
       case "turn_done":
@@ -200,9 +235,28 @@ export default function VoiceSession({ onComplete }) {
       wsRef.current = ws;
     });
 
-  const playOpenerAudio = (b64) =>
+  const getMicrophoneStream = async () => {
+    const existing = micStreamRef.current;
+    if (existing?.getAudioTracks().some((track) => track.readyState === "live")) {
+      return existing;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    micStreamRef.current = stream;
+    return stream;
+  };
+
+  const playOpenerAudio = (b64, text) =>
     new Promise((resolve) => {
-      if (!b64) return resolve();
+      if (!b64) {
+        playDeviceSpeech(text, agentName, speechRef).then(resolve);
+        return;
+      }
       try {
         const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
         const blob = new Blob([bytes], { type: "audio/mpeg" });
@@ -228,28 +282,35 @@ export default function VoiceSession({ onComplete }) {
     setState("opening");
     ensureAudioCtx();
     try {
+      await getMicrophoneStream();
       const res = await startMoodSession();
+      const sessionAgentName = res.agent_name || companionNameForPersona(personaMode);
+      setAgentName(sessionAgentName);
       setVibe(res.vibe || DEFAULT_VIBE);
       setTurns([{ role: "agent", text: res.agent_message }]);
       await openSocket(res.session_id);
       setState("agent");
-      await playOpenerAudio(res.audio_b64);
+      await playOpenerAudio(res.audio_b64, res.agent_message);
       setState("recording-ready");
+      await startRecording();
     } catch (e) {
+      cleanup();
       setError(e?.response?.data?.detail || e.message || "Failed to start");
       setState("idle");
     }
   };
 
   const startRecording = async () => {
+    if (startingRecordingRef.current || recorderRef.current?.state === "recording") return;
+    startingRecordingRef.current = true;
     setError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
+      const stream = await getMicrophoneStream();
+      let analyser = null;
       try {
         const ctx = ensureAudioCtx();
         const source = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
+        analyser = ctx.createAnalyser();
         analyser.fftSize = 128;
         source.connect(analyser); // not connected to destination -- no echo
         setRecordingAnalyser(analyser);
@@ -267,31 +328,43 @@ export default function VoiceSession({ onComplete }) {
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
-      recorder.onstop = handleStop;
-      recorder.start();
       recorderRef.current = recorder;
+      recorder.onstop = () => handleStop(recorder);
+      recorder.start(250);
       setState("recording");
+      if (analyser) {
+        startSilenceDetection(analyser, recorder, vadFrameRef, () => {
+          if (recorder.state === "recording") recorder.stop();
+        });
+      }
     } catch (e) {
       setError(e.message || "Microphone access denied");
+      setState("recording-ready");
+    } finally {
+      startingRecordingRef.current = false;
     }
   };
 
   const stopRecording = () => {
+    stopSilenceDetection(vadFrameRef);
     const r = recorderRef.current;
     if (r && r.state === "recording") r.stop();
   };
 
-  const handleStop = () => {
+  const handleStop = (recorder) => {
+    stopSilenceDetection(vadFrameRef);
     setState("processing");
     setRecordingAnalyser(null);
     const blob = new Blob(chunksRef.current, {
-      type: recorderRef.current?.mimeType || "audio/webm",
+      type: recorder.mimeType || "audio/webm",
     });
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop());
-      micStreamRef.current = null;
+    if (recorderRef.current === recorder) recorderRef.current = null;
+
+    if (!blob.size) {
+      setError("I didn't catch that. Keep speaking and I'll send when you pause.");
+      setState("recording-ready");
+      return;
     }
-    recorderRef.current = null;
 
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -338,7 +411,7 @@ export default function VoiceSession({ onComplete }) {
   );
 
   return (
-    <div style={wrap}>
+    <div className="voice-session">
       {state === "crisis" ? (
         <CrisisCard onContinue={reset} />
       ) : state === "done" ? (
@@ -346,66 +419,76 @@ export default function VoiceSession({ onComplete }) {
       ) : (
         <>
           {isOrbState ? (
-            <Orb state={state} onStart={beginSession} onRecord={startRecording} onStop={stopRecording} />
+            <Orb
+              state={state}
+              agentName={agentName}
+              onStart={beginSession}
+              onRecord={startRecording}
+              onStop={stopRecording}
+            />
           ) : null}
 
           {state === "recording" ? (
-            <VoiceWaveform
-              analyser={recordingAnalyser}
-              active
-              color={VIBE_STYLES[vibe].color}
-              intensity={VIBE_STYLES[vibe].intensity}
-            />
+            <div className="voice-waveform-wrap">
+              <VoiceWaveform
+                analyser={recordingAnalyser}
+                active
+                color={VIBE_STYLES[vibe].color}
+                intensity={VIBE_STYLES[vibe].intensity}
+                barCount={12}
+              />
+            </div>
           ) : state === "agent" ? (
-            <VoiceWaveform
-              analyser={playbackAnalyser}
-              active={!!playbackAnalyser}
-              color={VIBE_STYLES[vibe].color}
-              intensity={VIBE_STYLES[vibe].intensity}
-            />
+            <div className="voice-waveform-wrap">
+              <VoiceWaveform
+                analyser={playbackAnalyser}
+                active={!!playbackAnalyser}
+                color={VIBE_STYLES[vibe].color}
+                intensity={VIBE_STYLES[vibe].intensity}
+                barCount={12}
+              />
+            </div>
           ) : null}
 
           {turns.length > 0 ? (
-            <div style={transcriptBox}>
-              {turns.map((t, i) => (
-                <ChatBubble key={i} role={t.role} text={t.text} />
+            <div className="voice-captions" aria-live="polite">
+              {turns.slice(-2).map((turn, index, visibleTurns) => (
+                <div
+                  key={`${turn.role}-${turns.length - visibleTurns.length + index}`}
+                  className={`voice-caption ${turn.role === "user" ? "user" : "agent"}`}
+                >
+                  {turn.text}
+                </div>
               ))}
-              {state === "processing" ? <ChatBubble role="agent" text="…" muted /> : null}
+              {state === "processing" ? <div className="voice-caption agent muted">{agentName} is thinking…</div> : null}
             </div>
           ) : null}
 
           {state === "recording-ready" ? (
-            <div style={textReplyRow}>
-              <input
-                aria-label="Type your check-in"
-                placeholder="Or type your reply…"
-                value={draft}
-                maxLength={4000}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") submitText();
-                }}
-                style={textInput}
-              />
-              <button
-                aria-label="Send typed reply"
-                onClick={submitText}
-                disabled={!draft.trim()}
-                style={{ ...sendButton, opacity: draft.trim() ? 1 : 0.5 }}
-              >
-                Send
-              </button>
-            </div>
+            <details className="type-reply">
+              <summary>Prefer to type?</summary>
+              <div className="type-reply-row">
+                <input
+                  aria-label="Type your check-in"
+                  placeholder="Type your reply…"
+                  value={draft}
+                  maxLength={4000}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") submitText();
+                  }}
+                />
+                <button aria-label="Send typed reply" onClick={submitText} disabled={!draft.trim()}>
+                  Send
+                </button>
+              </div>
+            </details>
           ) : null}
 
-          <div style={disclaimer}>
-            Demo only — not medical advice or crisis support. In the U.S., call or
-            text 988 for immediate emotional support.
-          </div>
         </>
       )}
 
-      {error ? <div style={errorBox}>{error}</div> : null}
+      {error ? <div className="voice-error">{error}</div> : null}
     </div>
   );
 }
@@ -415,68 +498,165 @@ const ORB_CONFIG = {
     gradient: "radial-gradient(circle at 35% 30%, #7dbcff, #4da3ff 45%, #34d399 100%)",
     animation: "breathe 3.4s ease-in-out infinite",
     glow: "0 0 60px rgba(77,163,255,0.35)",
-    label: "Tap to start check-in",
+    label: (name) => `Tap to start with ${name}`,
     clickable: true,
   },
   opening: {
     gradient: "conic-gradient(from 0deg, #4da3ff, #a78bfa, #34d399, #4da3ff)",
     animation: "spin 2s linear infinite",
     glow: "0 0 70px rgba(167,139,250,0.55)",
-    label: "Connecting…",
+    label: (name) => `Connecting to ${name}…`,
     clickable: false,
   },
   agent: {
     gradient: "radial-gradient(circle at 35% 30%, #6ee7b7, #34d399 45%, #4da3ff 100%)",
     animation: "breathe 0.8s ease-in-out infinite alternate",
     glow: "0 0 90px rgba(52,211,153,0.6)",
-    label: "Coach is speaking…",
+    label: (name) => `${name} is speaking…`,
     clickable: false,
   },
   "recording-ready": {
     gradient: "radial-gradient(circle at 35% 30%, #7dbcff, #4da3ff 45%, #34d399 100%)",
     animation: "breathe 3.4s ease-in-out infinite",
     glow: "0 0 60px rgba(77,163,255,0.35)",
-    label: "Tap to answer",
+    label: () => "Preparing to listen…",
     clickable: true,
   },
   recording: {
     gradient: "radial-gradient(circle at 35% 30%, #9ccaff, #4da3ff 45%, #34d399 100%)",
     animation: "breathe 1.1s ease-in-out infinite",
     glow: "0 0 90px rgba(77,163,255,0.6)",
-    label: "Listening… (tap to send)",
+    label: () => "Listening… I'll send when you pause",
     clickable: true,
   },
   processing: {
     gradient: "conic-gradient(from 0deg, #4da3ff, #a78bfa, #34d399, #4da3ff)",
     animation: "spin 2s linear infinite",
     glow: "0 0 70px rgba(167,139,250,0.55)",
-    label: "Thinking…",
+    label: (name) => `${name} is thinking…`,
     clickable: false,
   },
 };
 
-function Orb({ state, onStart, onRecord, onStop }) {
+function Orb({ state, agentName, onStart, onRecord, onStop }) {
   const cfg = ORB_CONFIG[state] || ORB_CONFIG.idle;
+  const label = cfg.label(agentName);
   const onClick =
     state === "idle" ? onStart : state === "recording-ready" ? onRecord : state === "recording" ? onStop : undefined;
   return (
-    <div style={orbWrap}>
-      <div
+    <div className="voice-orb-wrap">
+      <button
+        type="button"
+        aria-label={label}
         onClick={cfg.clickable ? onClick : undefined}
+        disabled={!cfg.clickable}
+        className="voice-orb"
         style={{
-          width: 176,
-          height: 176,
-          borderRadius: "50%",
           background: cfg.gradient,
           animation: cfg.animation,
           boxShadow: cfg.glow,
           cursor: cfg.clickable ? "pointer" : "default",
-          transition: "box-shadow 400ms",
         }}
       />
-      <div style={orbLabel}>{cfg.label}</div>
+      <div className="voice-orb-label">{label}</div>
     </div>
   );
+}
+
+function stopSilenceDetection(frameRef) {
+  if (frameRef.current) {
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  }
+}
+
+function startSilenceDetection(analyser, recorder, frameRef, onSilence) {
+  stopSilenceDetection(frameRef);
+  const samples = new Uint8Array(analyser.fftSize);
+  let noiseFloor = 0.008;
+  let voicedSince = null;
+  let speechStarted = false;
+  let lastSpeechAt = null;
+
+  const tick = () => {
+    if (recorder.state !== "recording") {
+      stopSilenceDetection(frameRef);
+      return;
+    }
+
+    analyser.getByteTimeDomainData(samples);
+    let energy = 0;
+    for (const sample of samples) {
+      const normalized = (sample - 128) / 128;
+      energy += normalized * normalized;
+    }
+    const rms = Math.sqrt(energy / samples.length);
+    const now = performance.now();
+
+    if (!speechStarted) {
+      if (rms < 0.08) noiseFloor = noiseFloor * 0.95 + rms * 0.05;
+      const startThreshold = Math.max(0.025, noiseFloor * 2.8);
+      if (rms >= startThreshold) {
+        voicedSince ??= now;
+        if (now - voicedSince >= 140) {
+          speechStarted = true;
+          lastSpeechAt = now;
+        }
+      } else {
+        voicedSince = null;
+      }
+    } else {
+      const continueThreshold = Math.max(0.018, noiseFloor * 1.7);
+      if (rms >= continueThreshold) {
+        lastSpeechAt = now;
+      } else if (now - lastSpeechAt >= 1300) {
+        stopSilenceDetection(frameRef);
+        onSilence();
+        return;
+      }
+    }
+
+    frameRef.current = requestAnimationFrame(tick);
+  };
+
+  frameRef.current = requestAnimationFrame(tick);
+}
+
+function playDeviceSpeech(text, agentName, speechRef) {
+  return new Promise((resolve) => {
+    if (!text || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+      resolve();
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = window.speechSynthesis
+      .getVoices()
+      .filter((voice) => !voice.lang || voice.lang.toLowerCase().startsWith("en"));
+    if (voices.length) {
+      const nameSeed = [...agentName].reduce((total, char) => total + char.charCodeAt(0), 0);
+      utterance.voice = voices[nameSeed % voices.length];
+    }
+    utterance.rate = 0.94;
+    utterance.pitch = 1;
+    let settled = false;
+    const fallbackTimer = window.setTimeout(
+      () => finish(),
+      Math.min(30_000, Math.max(4_000, text.length * 90))
+    );
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(fallbackTimer);
+      if (speechRef.current === utterance) speechRef.current = null;
+      resolve();
+    };
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    speechRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  });
 }
 
 function SummaryCard({ entry, onReset }) {
@@ -528,74 +708,6 @@ function CrisisCard({ onContinue }) {
   );
 }
 
-const wrap = { marginTop: 16 };
-const orbWrap = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  padding: "24px 0",
-};
-const orbLabel = {
-  marginTop: 26,
-  fontSize: 15,
-  color: "var(--text-secondary)",
-  letterSpacing: "0.02em",
-};
-const transcriptBox = {
-  maxHeight: 260,
-  overflowY: "auto",
-  padding: 12,
-  background: "var(--bg-elevated)",
-  border: "1px solid var(--border-soft)",
-  borderRadius: 12,
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-  marginTop: 8,
-  marginBottom: 12,
-  textAlign: "left",
-};
-const disclaimer = {
-  marginTop: 9,
-  color: "var(--text-secondary)",
-  fontSize: 10,
-  lineHeight: 1.45,
-  textAlign: "center",
-};
-const textReplyRow = {
-  display: "flex",
-  gap: 8,
-  marginTop: 8,
-};
-const textInput = {
-  flex: 1,
-  minWidth: 0,
-  padding: "11px 12px",
-  color: "var(--text-primary)",
-  background: "var(--bg-elevated)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-  fontSize: 13,
-  outline: "none",
-};
-const sendButton = {
-  padding: "0 16px",
-  color: "var(--bg-primary)",
-  background: "var(--mood-color)",
-  border: 0,
-  borderRadius: 10,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-const errorBox = {
-  marginTop: 8,
-  padding: 10,
-  background: "rgba(255,92,92,0.1)",
-  border: "1px solid var(--rejected-color)",
-  borderRadius: 8,
-  color: "var(--rejected-color)",
-  fontSize: 12,
-};
 const summaryCard = {
   background: "var(--bg-elevated)",
   border: "1px solid var(--border)",

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowRight, Leaf, Lightbulb } from "lucide-react";
 import { Link } from "react-router-dom";
-import { Mic } from "lucide-react";
 import ActivityRings from "../components/ActivityRings.jsx";
 import MoodGraph from "../components/MoodGraph.jsx";
 import Skeleton from "../components/Skeleton.jsx";
@@ -8,7 +8,7 @@ import { fetchJobStats, fetchMoodHistory, fetchMoodStats } from "../lib/api.js";
 
 const JOB_SNAPSHOT = [
   { key: "applied", label: "Applied", color: "var(--applied-color)" },
-  { key: "interview", label: "Interview", color: "var(--interview-color)" },
+  { key: "interview", label: "Interview", color: "var(--energy-color)" },
   { key: "rejected", label: "Rejected", color: "var(--rejected-color)" },
   { key: "ghosted", label: "Ghosted", color: "var(--ghosted-color)" },
 ];
@@ -19,21 +19,22 @@ export default function Overview() {
   const [jobTotals, setJobTotals] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reflectionOpen, setReflectionOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [s, h, j] = await Promise.all([
+      const [moodStats, moodHistory, jobs] = await Promise.all([
         fetchMoodStats(7),
         fetchMoodHistory(30, 30),
         fetchJobStats().catch(() => null),
       ]);
-      setStats(s);
-      setHistory(h);
-      setJobTotals(j?.totals ?? null);
-    } catch (e) {
-      setError(e.message || "Failed to load");
+      setStats(moodStats);
+      setHistory(moodHistory);
+      setJobTotals(jobs?.totals ?? null);
+    } catch (requestError) {
+      setError(requestError.message || "Failed to load your week");
     } finally {
       setLoading(false);
     }
@@ -43,348 +44,185 @@ export default function Overview() {
     load();
   }, [load]);
 
-  const today = history[0];
-  const yesterday = history[1];
-  const sevenDay = computeSevenDayAverage(history);
+  const wellness = useMemo(() => wellnessScore(history), [history]);
+  const weeklyInsight = useMemo(() => buildWeeklyInsight(history), [history]);
+  const reflectionPrompt = dailyReflectionPrompt();
 
   return (
-    <div>
-      <div style={hero}>
-        <div style={eyebrow}>{greeting()}</div>
-        <h1 style={headline}>Here's how the week's looking.</h1>
+    <div className="overview-page">
+      <div className="page-intro">
+        <div className="page-eyebrow">{greeting()}</div>
+        <h1>Here's how the week's looking.</h1>
       </div>
 
-      <div style={heroGrid}>
-        <div style={{ ...card, ...ringCard }}>
+      <div className="overview-hero-grid">
+        <section className="surface wellness-card" aria-label="Wellness score">
           {loading && history.length === 0 ? (
             <Skeleton width={150} height={150} radius={999} />
           ) : (
-            <ActivityRings
-              mood={today?.mood_score ?? null}
-              energy={today?.energy_level ?? null}
-              anxiety={today?.anxiety_level ?? null}
-              size={150}
-            />
+            <ActivityRings score={wellness} size={150} />
           )}
-          <div style={ringCaption}>Wellness score</div>
-        </div>
+          <div className="wellness-caption">Wellness score</div>
+        </section>
 
-        <div style={card}>
-          <div style={chartHeader}>
-            <div style={cardTitle}>Mood, energy &amp; anxiety, last 7 check-ins</div>
-            <div style={chartLegend}>
-              <span><span style={{ color: "var(--mood-color)" }}>●</span> mood</span>
-              <span><span style={{ color: "var(--energy-color)" }}>●</span> energy</span>
-              <span><span style={{ color: "var(--anxiety-color)" }}>●</span> anxiety</span>
+        <section className="surface trend-card">
+          <div className="trend-card-header">
+            <h2>Mood &amp; energy, last 7 days</h2>
+            <div className="trend-legend" aria-label="Chart legend">
+              <span><i className="legend-dot mood" />mood</span>
+              <span><i className="legend-dot energy" />energy</span>
             </div>
           </div>
-          {loading && history.length === 0 ? (
+          {loading && stats.length === 0 ? (
             <Skeleton height={140} radius={12} />
           ) : (
             <MoodGraph data={statsForChart(stats)} />
           )}
-        </div>
+        </section>
       </div>
 
-      <div style={actionGrid}>
-        <Link to="/voice" style={startCard}>
-          <div style={startOrb} />
+      <div className="overview-action-grid">
+        <Link to="/voice" className="checkin-card">
+          <div className="mini-orb" aria-hidden="true" />
           <div>
-            <div style={actionTitle}>Start today's check-in</div>
-            <div style={actionSubtitle}>Two minutes, spoken or typed.</div>
+            <h2>Start today's check-in</h2>
+            <p>Two minutes, spoken or typed.</p>
           </div>
+          <span className="checkin-arrow" aria-hidden="true"><ArrowRight size={19} /></span>
         </Link>
 
-        <Link to="/jobs" style={{ ...card, ...jobCard }}>
-          <div style={actionTitle}>Job search snapshot</div>
-          <div style={jobStatsRow}>
-            {JOB_SNAPSHOT.map((j) => (
-              <div key={j.key}>
-                <div style={{ ...jobStatValue, color: j.color }}>{jobTotals?.[j.key] ?? 0}</div>
-                <div style={jobStatLabel}>{j.label}</div>
+        <Link to="/jobs" className="surface job-snapshot-card">
+          <h2>Job search snapshot</h2>
+          <div className="job-snapshot-stats">
+            {JOB_SNAPSHOT.map((item) => (
+              <div key={item.key}>
+                <strong style={{ color: item.color }}>{jobTotals?.[item.key] ?? 0}</strong>
+                <span>{item.label}</span>
               </div>
             ))}
           </div>
         </Link>
       </div>
 
-      <div style={{ ...card, marginTop: 24 }}>
-        <div style={ringLegend}>
-          <LegendItem
-            label="Mood"
-            color="var(--mood-color)"
-            value={today?.mood_score}
-            delta={trend(today?.mood_score, yesterday?.mood_score)}
-            loading={loading}
-          />
-          <LegendItem
-            label="Energy"
-            color="var(--energy-color)"
-            value={today?.energy_level}
-            delta={trend(today?.energy_level, yesterday?.energy_level)}
-            loading={loading}
-          />
-          <LegendItem
-            label="Anxiety"
-            color="var(--anxiety-color)"
-            value={today?.anxiety_level}
-            delta={trend(today?.anxiety_level, yesterday?.anxiety_level)}
-            inverted
-            loading={loading}
-          />
-        </div>
-
-        <div style={summaryRow}>
-          <SummaryStat label="7-day mood" value={format(sevenDay.mood)} loading={loading && history.length === 0} />
-          <SummaryStat label="7-day energy" value={format(sevenDay.energy)} loading={loading && history.length === 0} />
-          <SummaryStat
-            label="Last check-in"
-            value={today?.created_at ? timeAgo(today.created_at) : "—"}
-            loading={loading && history.length === 0}
-          />
-        </div>
-
-        {today?.agent_response ? (
-          <div style={coachBox}>
-            <div style={coachLabel}>COACH</div>
-            <div style={coachBody}>{today.agent_response}</div>
+      <div className="overview-insights-grid">
+        <section className="surface weekly-insights-card">
+          <div className="insight-card-heading">
+            <span className="insight-icon"><Lightbulb size={19} /></span>
+            <div><h2>Weekly Insights</h2><p>Generated from your completed check-ins</p></div>
           </div>
-        ) : null}
+          {loading ? (
+            <div className="insight-loading" aria-label="Loading weekly insights"><i /><i /><i /></div>
+          ) : weeklyInsight.ready ? (
+            <div className="weekly-insight-copy">
+              <strong>{weeklyInsight.title}</strong>
+              <p>{weeklyInsight.body}</p>
+              <Link to="/history">Review your check-ins →</Link>
+            </div>
+          ) : (
+            <div className="insight-pending">
+              <div className="insight-loading" aria-hidden="true"><i /><i /><i /></div>
+              <p>Insights will appear after {weeklyInsight.remaining} more check-in{weeklyInsight.remaining === 1 ? "" : "s"}.</p>
+            </div>
+          )}
+        </section>
 
-        {!loading && history.length === 0 ? (
-          <div style={emptyState}>
-            <Mic size={16} /> No check-ins yet — start one from the Voice Agent tab.
-          </div>
-        ) : null}
-
-        {error ? <div style={errorBox}>{error}</div> : null}
+        <section className={`surface daily-reflection-card${reflectionOpen ? " open" : ""}`}>
+          <Leaf size={30} aria-hidden="true" />
+          <h2>Daily Reflection</h2>
+          {reflectionOpen ? (
+            <div className="reflection-exercise" aria-live="polite">
+              <p>{reflectionPrompt}</p>
+              <Link to="/voice">Reflect with your voice agent →</Link>
+            </div>
+          ) : (
+            <p>Take a moment to breathe and reflect on your progress.</p>
+          )}
+          <button type="button" onClick={() => setReflectionOpen((open) => !open)}>
+            {reflectionOpen ? "Close Exercise" : "Explore Exercise"}
+          </button>
+        </section>
       </div>
+
+      {error ? <div className="inline-error">{error}</div> : null}
     </div>
   );
 }
 
-function LegendItem({ label, color, value, delta, inverted, loading }) {
-  if (loading) {
-    return (
-      <div style={legendItem}>
-        <span style={{ ...legendDot, background: color }} />
-        <span style={legendLabel}>{label}</span>
-        <Skeleton width={28} height={12} radius={4} />
-      </div>
-    );
-  }
-  const arrow = delta == null ? "" : delta > 0 ? "↑" : delta < 0 ? "↓" : "→";
-  const isGood = inverted ? delta < 0 : delta > 0;
-  const arrowColor =
-    delta == null || delta === 0
-      ? "var(--text-secondary)"
-      : isGood
-      ? "var(--mood-color)"
-      : "var(--rejected-color)";
-  return (
-    <div style={legendItem}>
-      <span style={{ ...legendDot, background: color }} />
-      <span style={legendLabel}>{label}</span>
-      <span style={legendValue}>{value ?? "—"}</span>
-      <span style={{ color: arrowColor, fontSize: 11 }}>{arrow}</span>
-    </div>
+function wellnessScore(history) {
+  if (!history.length) return null;
+  const recent = history.slice(0, 7).filter((entry) =>
+    [entry.mood_score, entry.energy_level, entry.anxiety_level].every((value) => value != null)
   );
-}
-
-function SummaryStat({ label, value, loading }) {
-  return (
-    <div style={summaryItem}>
-      <div style={summaryLabel}>{label}</div>
-      {loading ? (
-        <Skeleton width={48} height={18} radius={6} style={{ margin: "4px auto 0" }} />
-      ) : (
-        <div style={summaryValue}>{value}</div>
-      )}
-    </div>
+  if (!recent.length) return null;
+  const total = recent.reduce(
+    (sum, entry) => sum + (entry.mood_score + entry.energy_level + (10 - entry.anxiety_level)) / 3,
+    0
   );
+  return Math.round((total / recent.length) * 10);
 }
 
 function greeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
   return "Good evening";
 }
 
 function statsForChart(stats) {
-  return stats.map((s) => ({
-    day: s.day.slice(5),
-    mood: s.mood,
-    energy: s.energy,
-    anxiety: s.anxiety,
+  return stats.map((point) => ({
+    day: point.day,
+    mood: point.mood,
+    energy: point.energy,
   }));
 }
 
-function computeSevenDayAverage(history) {
-  const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
-  const recent = history.filter(
-    (h) => h.created_at && new Date(h.created_at).getTime() >= cutoff
-  );
-  if (recent.length === 0) return { mood: null, energy: null, anxiety: null };
-  const n = recent.length;
+function buildWeeklyInsight(history) {
+  const completed = history
+    .filter((entry) => entry.mood_score != null && entry.energy_level != null)
+    .slice(0, 7);
+  if (completed.length < 3) return { ready: false, remaining: 3 - completed.length };
+
+  const recent = completed.slice(0, Math.min(3, completed.length));
+  const earlier = completed.slice(-Math.min(3, completed.length));
+  const recentMood = average(recent.map((entry) => entry.mood_score));
+  const earlierMood = average(earlier.map((entry) => entry.mood_score));
+  const recentEnergy = average(recent.map((entry) => entry.energy_level));
+  const direction = recentMood - earlierMood;
+
+  if (direction >= 0.75) {
+    return {
+      ready: true,
+      title: "Your mood is moving upward.",
+      body: `Recent mood averaged ${recentMood.toFixed(1)}/10, with energy at ${recentEnergy.toFixed(1)}/10. Notice what helped on your stronger days and make space for it again.`,
+    };
+  }
+  if (direction <= -0.75) {
+    return {
+      ready: true,
+      title: "This week has felt heavier.",
+      body: `Recent mood averaged ${recentMood.toFixed(1)}/10. Consider protecting one small pocket of recovery time and naming what is taking the most energy.`,
+    };
+  }
   return {
-    mood: recent.reduce((s, e) => s + (e.mood_score || 0), 0) / n,
-    energy: recent.reduce((s, e) => s + (e.energy_level || 0), 0) / n,
-    anxiety: recent.reduce((s, e) => s + (e.anxiety_level || 0), 0) / n,
+    ready: true,
+    title: "Your mood has been relatively steady.",
+    body: `Recent mood averaged ${recentMood.toFixed(1)}/10 and energy ${recentEnergy.toFixed(1)}/10. Consistency is useful data—keep checking in to reveal the pattern underneath it.`,
   };
 }
 
-function trend(a, b) {
-  if (a == null || b == null) return null;
-  return a - b;
+function average(values) {
+  return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
-function format(n) {
-  if (n == null) return "—";
-  return n.toFixed(1);
+function dailyReflectionPrompt() {
+  const prompts = [
+    "What gave you even a small amount of energy today?",
+    "What are you carrying that you can set down for tonight?",
+    "Name one thing you handled better than you expected.",
+    "What would make tomorrow feel five percent lighter?",
+    "Where did you show yourself patience today?",
+  ];
+  const now = new Date();
+  const dayKey = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 86_400_000);
+  return prompts[dayKey % prompts.length];
 }
-
-function timeAgo(iso) {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-const hero = { animation: "fadeUp 420ms ease both" };
-const eyebrow = {
-  fontSize: 13,
-  letterSpacing: "0.1em",
-  color: "var(--text-tertiary)",
-  textTransform: "uppercase",
-  marginBottom: 10,
-};
-const headline = { fontSize: 34, fontWeight: 600, margin: "0 0 8px" };
-const card = {
-  background: "var(--bg-card)",
-  border: "1px solid var(--border)",
-  borderRadius: 18,
-  padding: 28,
-};
-const heroGrid = {
-  display: "grid",
-  gridTemplateColumns: "280px 1fr",
-  gap: 24,
-  marginTop: 36,
-  animation: "fadeUp 460ms ease both",
-  animationDelay: "60ms",
-};
-const ringCard = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 12,
-};
-const ringCaption = {
-  fontSize: 13,
-  color: "var(--text-secondary)",
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-};
-const chartHeader = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: 10,
-  flexWrap: "wrap",
-  gap: 8,
-};
-const cardTitle = { fontSize: 15, fontWeight: 600 };
-const chartLegend = { display: "flex", gap: 16, fontSize: 12, color: "var(--text-secondary)" };
-const actionGrid = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: 24,
-  marginTop: 24,
-  animation: "fadeUp 460ms ease both",
-  animationDelay: "120ms",
-};
-const startCard = {
-  background: "linear-gradient(135deg, rgba(77,163,255,0.14), rgba(52,211,153,0.1))",
-  border: "1px solid rgba(77,163,255,0.28)",
-  borderRadius: 18,
-  padding: 28,
-  display: "flex",
-  alignItems: "center",
-  gap: 20,
-  cursor: "pointer",
-  textDecoration: "none",
-  color: "var(--text-primary)",
-  transition: "border-color 160ms",
-};
-const startOrb = {
-  width: 52,
-  height: 52,
-  borderRadius: "50%",
-  background: "radial-gradient(circle at 35% 30%, #7dbcff, #4da3ff 45%, #34d399 100%)",
-  animation: "breathe 3.6s ease-in-out infinite",
-  flexShrink: 0,
-};
-const jobCard = {
-  display: "block",
-  textDecoration: "none",
-  color: "var(--text-primary)",
-  cursor: "pointer",
-  transition: "border-color 160ms",
-};
-const actionTitle = { fontSize: 16, fontWeight: 600, marginBottom: 4 };
-const actionSubtitle = { fontSize: 13, color: "var(--text-secondary)" };
-const jobStatsRow = { display: "flex", gap: 22, marginTop: 14 };
-const jobStatValue = { fontSize: 20, fontWeight: 700 };
-const jobStatLabel = { fontSize: 12, color: "var(--text-secondary)", marginTop: 2 };
-const ringLegend = { display: "flex", justifyContent: "center", gap: 18 };
-const legendItem = { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 };
-const legendDot = { width: 8, height: 8, borderRadius: "50%" };
-const legendLabel = { color: "var(--text-secondary)" };
-const legendValue = { color: "var(--text-primary)", fontWeight: 600 };
-const summaryRow = { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 18 };
-const summaryItem = {
-  background: "var(--bg-elevated)",
-  borderRadius: 10,
-  padding: "10px 8px",
-  textAlign: "center",
-  border: "1px solid var(--border-soft)",
-};
-const summaryLabel = { color: "var(--text-secondary)", fontSize: 11, letterSpacing: "0.02em" };
-const summaryValue = { fontSize: 16, fontWeight: 600, marginTop: 2, letterSpacing: "-0.01em" };
-const coachBox = {
-  marginTop: 18,
-  padding: "12px 14px",
-  background: "var(--bg-elevated)",
-  borderLeft: "2px solid var(--mood-color)",
-  borderRadius: 8,
-  border: "1px solid var(--border-soft)",
-};
-const coachLabel = { color: "var(--mood-color)", fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", marginBottom: 6 };
-const coachBody = { fontSize: 13, lineHeight: 1.55, color: "var(--text-primary)" };
-const emptyState = {
-  marginTop: 14,
-  padding: 14,
-  color: "var(--text-secondary)",
-  fontSize: 13,
-  textAlign: "center",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 8,
-  border: "1px dashed var(--border)",
-  borderRadius: 12,
-};
-const errorBox = {
-  marginTop: 12,
-  padding: 10,
-  background: "rgba(255,92,92,0.08)",
-  border: "1px solid var(--rejected-color)",
-  borderRadius: 8,
-  color: "var(--rejected-color)",
-  fontSize: 12,
-};

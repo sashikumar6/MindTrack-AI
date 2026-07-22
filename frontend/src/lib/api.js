@@ -12,6 +12,10 @@ export const api = axios.create({
 export const fetchMe = () => api.get("/auth/me").then((r) => r.data);
 export const updateMe = (patch) => api.patch("/auth/me", patch).then((r) => r.data);
 export const logout = () => api.post("/auth/logout").then((r) => r.data);
+export const fetchVoicePreview = (voice) =>
+  api
+    .post("/mood/voice-preview", { voice }, { responseType: "blob" })
+    .then((response) => response.data);
 
 export const fetchJobStats = () => api.get("/jobs/stats").then((r) => r.data);
 export const fetchJobTimeline = (days = 14) =>

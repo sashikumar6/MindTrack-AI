@@ -6,7 +6,8 @@ import Overview from "./pages/Overview.jsx";
 import VoiceAgentPage from "./pages/VoiceAgentPage.jsx";
 import HistoryPage from "./pages/HistoryPage.jsx";
 import JobTrackerPage from "./pages/JobTrackerPage.jsx";
-import SettingsPage from "./pages/SettingsPage.jsx";
+import SettingsPage, { CompanionCustomizer } from "./pages/SettingsPage.jsx";
+import CompanionPage from "./pages/CompanionPage.jsx";
 
 function RequireAuth({ children }) {
   const { user, loading } = useAuth();
@@ -34,10 +35,14 @@ function CenteredMessage({ children }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/voice" element={<VoiceAgentPage />} />
+          {import.meta.env.DEV ? (
+            <Route path="/__preview/companion" element={<CompanionCustomizer preview />} />
+          ) : null}
           <Route
             path="/"
             element={
@@ -47,9 +52,9 @@ export default function App() {
             }
           >
             <Route index element={<Overview />} />
-            <Route path="voice" element={<VoiceAgentPage />} />
             <Route path="history" element={<HistoryPage />} />
             <Route path="jobs" element={<JobTrackerPage />} />
+            <Route path="companion" element={<CompanionPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

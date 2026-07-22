@@ -18,7 +18,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -35,7 +35,7 @@ from agents.mood_conversation import (
     process_turn_streaming,
     start_session,
 )
-from agents.personas import DEFAULT_PERSONA
+from agents.personas import DEFAULT_CONVERSATION_MODE, DEFAULT_PERSONA
 from auth.deps import get_current_user, get_current_user_optional, get_current_user_ws
 from auth.routes import router as auth_router
 from config.settings import settings
@@ -43,12 +43,25 @@ from db.database import get_session, init_db
 from db.models import JobMetric, MoodEntry, User
 from scheduler.cron import shutdown as scheduler_shutdown
 from scheduler.cron import start as scheduler_start
-from voice.elevenlabs_tts import synthesize, synthesize_stream
+from voice.elevenlabs_tts import OPENAI_TTS_VOICES, synthesize, synthesize_stream
 from voice.whisper_stt import transcribe
 
 logger = logging.getLogger(__name__)
 
 JOB_STATUSES = ("applied", "rejected", "interview", "ghosted")
+
+VOICE_PREVIEW_NAMES = {
+    "marin": "Ava",
+    "cedar": "Julian",
+    "sage": "Terra",
+    "coral": "Aria",
+    "shimmer": "Nora",
+    "verse": "Maya",
+    "ash": "Noah",
+    "echo": "Rowan",
+    "alloy": "Sage",
+    "ballad": "Leo",
+}
 
 
 @asynccontextmanager
@@ -135,6 +148,10 @@ app.add_middleware(
 
 class MoodTextRequest(BaseModel):
     text: str
+
+
+class VoicePreviewRequest(BaseModel):
+    voice: str
 
 
 def _serialize_job(row: JobMetric) -> dict[str, Any]:
@@ -293,16 +310,33 @@ async def jobs_timeline(
 # decision (is the caller authenticated?), not a global DEMO_MODE setting,
 # since both kinds of traffic can be in flight in the same process.
 
-def _persona_and_voice(user: User | None) -> tuple[str, str | None]:
-    """Read the caller's persisted coach-tone/voice preference, if any.
+def _companion_preferences(user: User | None) -> tuple[str, str | None, str]:
+    """Read the caller's persisted personality/voice/mode preference, if any.
 
     Anonymous callers (user is None) always get the global defaults --
     there's no row to read a preference from, matching the rest of the
     anonymous/ephemeral demo behavior.
     """
     if user is None:
-        return DEFAULT_PERSONA, None
-    return user.persona_mode, user.tts_voice
+        return DEFAULT_PERSONA, None, DEFAULT_CONVERSATION_MODE
+    return user.persona_mode, user.tts_voice, user.conversation_mode
+
+
+@app.post("/mood/voice-preview")
+async def voice_preview(body: VoicePreviewRequest) -> Response:
+    """Preview an approved voice using fixed copy; safe for the public demo."""
+    if settings.TTS_PROVIDER.strip().lower() != "openai":
+        raise HTTPException(status_code=409, detail="Voice previews require the OpenAI voice provider")
+    if body.voice not in OPENAI_TTS_VOICES:
+        raise HTTPException(status_code=422, detail=f"Invalid tts_voice: {body.voice}")
+    preview_name = VOICE_PREVIEW_NAMES[body.voice]
+    audio = await synthesize(
+        f"Hi, I'm {preview_name}. Take your time and tell me how today has been feeling.",
+        voice=body.voice,
+    )
+    if not audio:
+        raise HTTPException(status_code=502, detail="Voice preview is temporarily unavailable")
+    return Response(content=audio, media_type="audio/mpeg")
 
 
 @app.post("/mood/text")
@@ -313,8 +347,10 @@ async def mood_text(
         raise HTTPException(status_code=400, detail="Empty text")
     if len(body.text) > settings.MAX_TEXT_CHARS:
         raise HTTPException(status_code=413, detail="Text check-in is too long")
-    persona, voice = _persona_and_voice(user)
-    return await run_mood_pipeline(body.text, user.id if user else None, persona, voice)
+    persona, voice, mode = _companion_preferences(user)
+    return await run_mood_pipeline(
+        body.text, user.id if user else None, persona, voice, mode
+    )
 
 
 @app.post("/mood/audio")
@@ -340,8 +376,10 @@ async def mood_audio(
     if not transcript:
         raise HTTPException(status_code=422, detail="No speech detected")
 
-    persona, voice = _persona_and_voice(user)
-    return await run_mood_pipeline(transcript, user.id if user else None, persona, voice)
+    persona, voice, mode = _companion_preferences(user)
+    return await run_mood_pipeline(
+        transcript, user.id if user else None, persona, voice, mode
+    )
 
 
 # ---------- Mood (conversational, agentic) ----------
@@ -374,8 +412,8 @@ async def _transcribe_upload(file: UploadFile) -> str:
 async def mood_session_start(
     user: User | None = Depends(get_current_user_optional),
 ) -> dict[str, Any]:
-    persona, voice = _persona_and_voice(user)
-    result = await start_session(user.id if user else None, persona)
+    persona, voice, mode = _companion_preferences(user)
+    result = await start_session(user.id if user else None, persona, mode)
     result["audio_b64"] = await _audio_b64(result["agent_message"], voice)
     return result
 
@@ -393,9 +431,11 @@ async def mood_session_turn_text(
         raise HTTPException(status_code=400, detail="Empty text")
     if len(body.text) > settings.MAX_TEXT_CHARS:
         raise HTTPException(status_code=413, detail="Text check-in is too long")
-    persona, voice = _persona_and_voice(user)
+    persona, voice, mode = _companion_preferences(user)
     try:
-        result = await process_turn(body.session_id, body.text, user.id if user else None, persona)
+        result = await process_turn(
+            body.session_id, body.text, user.id if user else None, persona, mode
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result["audio_b64"] = await _audio_b64(result["agent_message"], voice)
@@ -410,9 +450,11 @@ async def mood_session_turn_audio(
     user: User | None = Depends(get_current_user_optional),
 ) -> dict[str, Any]:
     transcript = await _transcribe_upload(file)
-    persona, voice = _persona_and_voice(user)
+    persona, voice, mode = _companion_preferences(user)
     try:
-        result = await process_turn(session_id, transcript, user.id if user else None, persona)
+        result = await process_turn(
+            session_id, transcript, user.id if user else None, persona, mode
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result["audio_b64"] = await _audio_b64(result["agent_message"], voice)
@@ -476,7 +518,7 @@ async def mood_session_ws(websocket: WebSocket, session_id: int) -> None:
     # Persona/voice are the user's persisted Settings preference, read once
     # for the lifetime of this connection -- a change made in another tab
     # mid-conversation takes effect on the *next* session, not retroactively.
-    persona, voice = _persona_and_voice(user)
+    persona, voice, mode = _companion_preferences(user)
 
     try:
         while True:
@@ -539,7 +581,7 @@ async def mood_session_ws(websocket: WebSocket, session_id: int) -> None:
 
             try:
                 async for event in process_turn_streaming(
-                    session_id, user_message, user_id, persona
+                    session_id, user_message, user_id, persona, mode
                 ):
                     if event["type"] == "vibe":
                         await websocket.send_json({"type": "vibe", "vibe": event["vibe"]})
@@ -560,14 +602,19 @@ async def mood_session_ws(websocket: WebSocket, session_id: int) -> None:
                     elif event["type"] == "turn_complete":
                         rest = {k: v for k, v in event.items() if k != "type"}
                         await websocket.send_json({"type": "turn_done", **rest})
+            except (WebSocketDisconnect, RuntimeError):
+                return
             except ValueError as exc:
                 await websocket.send_json({"type": "error", "detail": str(exc)})
             except Exception:
                 logger.exception("Streaming turn failed for session %s", session_id)
-                await websocket.send_json(
-                    {"type": "error", "detail": "Something went wrong processing that turn."}
-                )
-    except WebSocketDisconnect:
+                try:
+                    await websocket.send_json(
+                        {"type": "error", "detail": "Something went wrong processing that turn."}
+                    )
+                except (WebSocketDisconnect, RuntimeError):
+                    return
+    except (WebSocketDisconnect, RuntimeError):
         return
 
 

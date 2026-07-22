@@ -84,10 +84,37 @@ def test_decide_falls_back_to_calm_on_invalid_vibe(monkeypatch):
     assert decision["vibe"] == "calm"
 
 
+def test_conversation_prompt_uses_selected_companion_name():
+    messages = mood_conversation._build_messages([], [], 1, persona="logical")
+    assert "Your name is Atlas." in messages[0]["content"]
+    assert "Your name is Jeni." not in messages[0]["content"]
+
+
+def test_session_opener_introduces_selected_companion(monkeypatch):
+    async def fake_decide(*args, **kwargs):
+        return {
+            "action": "ask",
+            "message": "How are you doing today?",
+            "reasoning": "test opener",
+            "vibe": "calm",
+        }
+
+    monkeypatch.setattr(mood_conversation, "_decide", fake_decide)
+    result = asyncio.run(mood_conversation.start_session(persona="logical"))
+    assert result["agent_name"] == "Atlas"
+    assert result["agent_message"].startswith("Hi, I'm Atlas.")
+
+
 def test_process_turn_streaming_emits_vibe_before_text_delta(monkeypatch):
     session_id = _make_session(user_id=None)
 
-    async def fake_decide(history, turns, turn_number, persona="warm"):
+    async def fake_decide(
+        history,
+        turns,
+        turn_number,
+        persona="empathetic",
+        conversation_mode="just_listen",
+    ):
         return {
             "action": "ask",
             "message": "Tell me more.",

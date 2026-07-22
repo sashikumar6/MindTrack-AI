@@ -1,100 +1,83 @@
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const TOOLTIP_STYLE = {
   background: "var(--tooltip-bg)",
-  border: "1px solid var(--border-soft)",
+  border: "1px solid var(--border)",
   borderRadius: 10,
   padding: "8px 12px",
   fontSize: 12,
-  backdropFilter: "blur(12px)",
-  WebkitBackdropFilter: "blur(12px)",
-  boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
 };
 
 export default function MoodGraph({ data = [] }) {
+  const completed = data.filter((point) => point.mood != null || point.energy != null);
+  if (!completed.length) {
+    return (
+      <div className="chart-empty">
+        Complete a conversation through its summary to begin your seven-day trend.
+      </div>
+    );
+  }
+
   return (
-    <div style={{ width: "100%", height: 200, marginTop: 18 }}>
+    <div className="mood-graph">
       <ResponsiveContainer>
-        <AreaChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-          <defs>
-            <linearGradient id="grad-mood" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--mood-color)" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="var(--mood-color)" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="grad-energy" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--energy-color)" stopOpacity={0.25} />
-              <stop offset="100%" stopColor="var(--energy-color)" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="grad-anxiety" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--anxiety-color)" stopOpacity={0.2} />
-              <stop offset="100%" stopColor="var(--anxiety-color)" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
+        <LineChart data={data} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
           <XAxis
             dataKey="day"
-            stroke="var(--text-tertiary)"
-            tickLine={false}
             axisLine={false}
-            tick={{ fontSize: 11 }}
-          />
-          <YAxis
-            domain={[0, 10]}
-            stroke="var(--text-tertiary)"
             tickLine={false}
-            axisLine={false}
-            tick={{ fontSize: 11 }}
-            width={28}
+            tick={{ fill: "var(--text-tertiary)", fontSize: 10 }}
+            tickFormatter={formatDayTick}
+            interval={0}
+            padding={{ left: 8, right: 8 }}
           />
+          <YAxis domain={[0, 10]} hide />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
-            cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
+            labelStyle={{ color: "var(--text-secondary)" }}
+            labelFormatter={formatDayLabel}
+            cursor={{ stroke: "var(--border)" }}
           />
-          <Area
-            type="monotone"
+          <Line
+            type="linear"
             dataKey="mood"
             stroke="var(--mood-color)"
-            strokeWidth={2}
-            fill="url(#grad-mood)"
-            dot={false}
-            activeDot={{ r: 4, strokeWidth: 0 }}
-            isAnimationActive
-            animationDuration={900}
+            strokeWidth={3}
+            dot={{ r: completed.length === 1 ? 5 : 3, fill: "var(--mood-color)", strokeWidth: 0 }}
+            activeDot={{ r: 5, fill: "var(--mood-color)", strokeWidth: 0 }}
+            connectNulls
+            animationDuration={1000}
           />
-          <Area
-            type="monotone"
+          <Line
+            type="linear"
             dataKey="energy"
             stroke="var(--energy-color)"
-            strokeWidth={2}
-            fill="url(#grad-energy)"
-            dot={false}
-            activeDot={{ r: 4, strokeWidth: 0 }}
-            isAnimationActive
-            animationDuration={900}
-            animationBegin={120}
+            strokeWidth={3}
+            dot={{ r: completed.length === 1 ? 5 : 3, fill: "var(--energy-color)", strokeWidth: 0 }}
+            activeDot={{ r: 5, fill: "var(--energy-color)", strokeWidth: 0 }}
+            connectNulls
+            animationDuration={1000}
+            animationBegin={140}
           />
-          <Area
-            type="monotone"
-            dataKey="anxiety"
-            stroke="var(--anxiety-color)"
-            strokeWidth={2}
-            fill="url(#grad-anxiety)"
-            dot={false}
-            activeDot={{ r: 4, strokeWidth: 0 }}
-            isAnimationActive
-            animationDuration={900}
-            animationBegin={240}
-          />
-        </AreaChart>
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );
+}
+
+function localDate(day) {
+  const [year, month, date] = String(day).split("-").map(Number);
+  return new Date(year, month - 1, date);
+}
+
+function formatDayTick(day) {
+  return localDate(day).toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function formatDayLabel(day) {
+  return localDate(day).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
 }

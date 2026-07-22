@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from agents.personas import is_valid_persona
+from agents.personas import is_valid_conversation_mode, is_valid_persona
 from auth.crypto import encrypt
 from auth.deps import get_current_user
 from auth.oauth import oauth
@@ -43,6 +43,7 @@ def _me_payload(user: User) -> dict:
         "picture_url": user.picture_url,
         "gmail_connected": gmail_connected,
         "persona_mode": user.persona_mode,
+        "conversation_mode": user.conversation_mode,
         "tts_voice": user.tts_voice,
         "tts_provider": settings.TTS_PROVIDER,
     }
@@ -124,15 +125,21 @@ async def me(user: User = Depends(get_current_user)):
 
 class UpdateMeRequest(BaseModel):
     persona_mode: str | None = None
+    conversation_mode: str | None = None
     tts_voice: str | None = None
 
 
 @router.patch("/me")
 async def update_me(body: UpdateMeRequest, user: User = Depends(get_current_user)):
-    if body.persona_mode is None and body.tts_voice is None:
+    if body.persona_mode is None and body.conversation_mode is None and body.tts_voice is None:
         raise HTTPException(status_code=400, detail="No fields to update")
     if body.persona_mode is not None and not is_valid_persona(body.persona_mode):
         raise HTTPException(status_code=422, detail=f"Invalid persona_mode: {body.persona_mode}")
+    if body.conversation_mode is not None and not is_valid_conversation_mode(body.conversation_mode):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid conversation_mode: {body.conversation_mode}",
+        )
     if body.tts_voice is not None and body.tts_voice not in OPENAI_TTS_VOICES:
         raise HTTPException(status_code=422, detail=f"Invalid tts_voice: {body.tts_voice}")
 
@@ -140,9 +147,12 @@ async def update_me(body: UpdateMeRequest, user: User = Depends(get_current_user
         row = session.execute(select(User).where(User.id == user.id)).scalar_one()
         if body.persona_mode is not None:
             row.persona_mode = body.persona_mode
+        if body.conversation_mode is not None:
+            row.conversation_mode = body.conversation_mode
         if body.tts_voice is not None:
             row.tts_voice = body.tts_voice
         session.flush()
         user.persona_mode = row.persona_mode
+        user.conversation_mode = row.conversation_mode
         user.tts_voice = row.tts_voice
     return _me_payload(user)

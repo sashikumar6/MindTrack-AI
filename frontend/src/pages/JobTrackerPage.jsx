@@ -6,10 +6,10 @@ export default function JobTrackerPage() {
   const { user } = useAuth();
 
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto" }}>
-      <div style={header}>
-        <h1 style={title}>Job Tracker</h1>
-        <p style={subtitle}>Pulled quietly from your inbox every day.</p>
+    <div className="jobs-page">
+      <div className="page-intro jobs-intro">
+        <h1>Job Tracker</h1>
+        <p>Pulled quietly from your inbox every day.</p>
       </div>
       {user && !user.gmail_connected ? (
         <div style={banner}>
@@ -30,10 +30,6 @@ export default function JobTrackerPage() {
     </div>
   );
 }
-
-const header = { animation: "fadeUp 420ms ease both" };
-const title = { fontSize: 34, fontWeight: 600, margin: "0 0 8px" };
-const subtitle = { fontSize: 15, color: "var(--text-secondary)", margin: "0 0 24px" };
 const banner = {
   display: "flex",
   alignItems: "center",

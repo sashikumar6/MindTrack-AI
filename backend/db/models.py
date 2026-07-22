@@ -25,7 +25,12 @@ class User(Base):
     picture_url = Column(Text)
     created_at = Column(DateTime, server_default=func.current_timestamp(), nullable=False)
     last_login_at = Column(DateTime)
-    persona_mode = Column(String(16), nullable=False, default="warm", server_default="warm")
+    persona_mode = Column(
+        String(16), nullable=False, default="empathetic", server_default="empathetic"
+    )
+    conversation_mode = Column(
+        String(20), nullable=False, default="just_listen", server_default="just_listen"
+    )
     tts_voice = Column(String(16), nullable=False, default="marin", server_default="marin")
 
     google_credential = relationship(

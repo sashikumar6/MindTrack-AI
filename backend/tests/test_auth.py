@@ -122,7 +122,7 @@ def test_session_transcript_ownership_enforced():
         app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_me_includes_persona_and_voice_defaults():
+def test_me_includes_companion_preference_defaults():
     user = _make_user("prefs-defaults@example.com")
     client = TestClient(app)
     app.dependency_overrides[get_current_user] = lambda: user
@@ -130,7 +130,8 @@ def test_me_includes_persona_and_voice_defaults():
         response = client.get("/auth/me")
         assert response.status_code == 200
         body = response.json()
-        assert body["persona_mode"] == "warm"
+        assert body["persona_mode"] == "empathetic"
+        assert body["conversation_mode"] == "just_listen"
         assert body["tts_voice"] == "marin"
         assert body["tts_provider"] == settings.TTS_PROVIDER
     finally:
@@ -143,22 +144,29 @@ def test_patch_me_requires_login():
     assert response.status_code == 401
 
 
-def test_patch_me_updates_persona_and_voice():
+def test_patch_me_updates_companion_preferences():
     user = _make_user("prefs-update@example.com")
     client = TestClient(app)
     app.dependency_overrides[get_current_user] = lambda: user
     try:
         response = client.patch(
-            "/auth/me", json={"persona_mode": "direct", "tts_voice": "coral"}
+            "/auth/me",
+            json={
+                "persona_mode": "direct",
+                "conversation_mode": "action_plan",
+                "tts_voice": "coral",
+            },
         )
         assert response.status_code == 200
         body = response.json()
         assert body["persona_mode"] == "direct"
+        assert body["conversation_mode"] == "action_plan"
         assert body["tts_voice"] == "coral"
 
         with get_session() as session:
             row = session.get(User, user.id)
             assert row.persona_mode == "direct"
+            assert row.conversation_mode == "action_plan"
             assert row.tts_voice == "coral"
     finally:
         app.dependency_overrides.pop(get_current_user, None)
@@ -186,6 +194,17 @@ def test_patch_me_rejects_invalid_voice():
         app.dependency_overrides.pop(get_current_user, None)
 
 
+def test_patch_me_rejects_invalid_conversation_mode():
+    user = _make_user("prefs-bad-mode@example.com")
+    client = TestClient(app)
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        response = client.patch("/auth/me", json={"conversation_mode": "diagnose"})
+        assert response.status_code == 422
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
 def test_patch_me_rejects_empty_body():
     user = _make_user("prefs-empty@example.com")
     client = TestClient(app)
@@ -195,3 +214,25 @@ def test_patch_me_rejects_empty_body():
         assert response.status_code == 400
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_voice_preview_returns_audio_for_valid_voice(monkeypatch):
+    client = TestClient(app)
+
+    async def fake_synthesize(text, voice=None):
+        assert "I'm Ava" in text
+        assert "MindTrack voice preview" not in text
+        assert voice == "marin"
+        return b"fake-mp3"
+
+    monkeypatch.setattr("api.main.synthesize", fake_synthesize)
+    response = client.post("/mood/voice-preview", json={"voice": "marin"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.content == b"fake-mp3"
+
+
+def test_voice_preview_rejects_unknown_voice():
+    client = TestClient(app)
+    response = client.post("/mood/voice-preview", json={"voice": "unknown"})
+    assert response.status_code == 422

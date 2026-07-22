@@ -28,19 +28,19 @@ export default function VoiceAgentPage() {
               <span><small>Active companion</small><strong>{companion.name} · {companion.label}</strong></span>
             </div>
           </div>
-
-          <section className="voice-conversation-panel">
-            <div className="voice-page-glow" />
-            <div className="voice-stage voice-stage-embedded">
-              <VoiceSession onComplete={() => {}} personaMode={user.persona_mode} />
-            </div>
-            <footer className="voice-page-footer">
-              <p className="voice-disclaimer">
-                Demo only — not medical advice or crisis support. In the U.S., call or text 988 for immediate emotional support.
-              </p>
-            </footer>
-          </section>
         </main>
+
+        <section className="voice-conversation-panel">
+          <div className="voice-page-glow" />
+          <div className="voice-stage voice-stage-embedded">
+            <VoiceSession onComplete={() => {}} personaMode={user.persona_mode} />
+          </div>
+          <footer className="voice-page-footer">
+            <p className="voice-disclaimer">
+              Demo only — not medical advice or crisis support. In the U.S., call or text 988 for immediate emotional support.
+            </p>
+          </footer>
+        </section>
       </div>
     );
   }

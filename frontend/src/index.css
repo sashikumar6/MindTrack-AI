@@ -855,20 +855,19 @@ button:focus-visible,
 }
 
 .voice-conversation-panel {
-  min-height: 620px;
-  margin-top: 32px;
+  width: 100%;
+  min-height: calc(100vh - 260px);
+  margin-top: 24px;
   position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: linear-gradient(160deg, rgba(13, 16, 22, 0.98), rgba(7, 9, 13, 0.98));
-  border: 1px solid var(--border);
-  border-radius: 24px;
-  box-shadow: var(--card-shadow);
+  background: var(--bg-primary);
 }
 
 .voice-stage-embedded {
   min-height: 510px;
+  flex: 1;
 }
 
 .voice-customizer-panel {

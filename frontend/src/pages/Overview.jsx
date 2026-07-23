@@ -43,6 +43,21 @@ export default function Overview() {
       <div className="page-intro">
         <div className="page-eyebrow">{greeting()}</div>
         <h1>Here's how the week's looking.</h1>
+        <p>
+          A quick voice check-in each day — talk it out, and MindTrack
+          tracks your mood and energy over time.
+        </p>
+      </div>
+
+      <div className="overview-action-grid overview-action-grid-single">
+        <Link to="/voice" className="checkin-card">
+          <div className="mini-orb" aria-hidden="true" />
+          <div>
+            <h2>Start today's check-in</h2>
+            <p>Two minutes, spoken or typed.</p>
+          </div>
+          <span className="checkin-arrow" aria-hidden="true"><ArrowRight size={19} /></span>
+        </Link>
       </div>
 
       <div className="overview-hero-grid">
@@ -69,17 +84,6 @@ export default function Overview() {
             <MoodGraph data={statsForChart(stats)} />
           )}
         </section>
-      </div>
-
-      <div className="overview-action-grid overview-action-grid-single">
-        <Link to="/voice" className="checkin-card">
-          <div className="mini-orb" aria-hidden="true" />
-          <div>
-            <h2>Start today's check-in</h2>
-            <p>Two minutes, spoken or typed.</p>
-          </div>
-          <span className="checkin-arrow" aria-hidden="true"><ArrowRight size={19} /></span>
-        </Link>
       </div>
 
       <div className="overview-insights-grid">

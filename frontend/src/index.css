@@ -191,6 +191,13 @@ button:focus-visible,
   font-size: clamp(38px, 4vw, 52px);
 }
 
+.overview-page .page-intro p {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 15px;
+  max-width: 520px;
+}
+
 .companion-overview-card {
   margin-top: 34px;
   padding: 30px;

@@ -53,11 +53,17 @@ services:
         sync: false
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
+      # NOTE: the "mindtrack-ai" name was already taken by an earlier
+      # deploy attempt, so Render assigned this service the suffixed
+      # hostname below instead of the plain one. If you ever delete the
+      # old stale "mindtrack-ai" service and this one gets reassigned the
+      # plain hostname, update these three (and the Google OAuth redirect
+      # URI) to match.
       - key: OAUTH_REDIRECT_URL
-        value: https://mindtrack-ai.onrender.com/auth/callback
+        value: https://mindtrack-ai-yx57.onrender.com/auth/callback
       - key: FRONTEND_URL
-        value: https://mindtrack-ai.onrender.com
+        value: https://mindtrack-ai-yx57.onrender.com
       - key: ALLOWED_ORIGINS
-        value: https://mindtrack-ai.onrender.com
+        value: https://mindtrack-ai-yx57.onrender.com
       - key: SESSION_HTTPS_ONLY
         value: "true"

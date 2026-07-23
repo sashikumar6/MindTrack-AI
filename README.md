@@ -153,7 +153,7 @@ See [DESIGN.md](DESIGN.md) for the full architecture writeup.
 
 ## Current status
 
-Deployed at `https://34-56-244-112.sslip.io` on a GCP Compute Engine Always
+Deployed at `https://mindtrack-ai-yx57.onrender.com` on a GCP Compute Engine Always
 Free VM — `/health` passes and the site is served over a real, trusted
 Let's Encrypt certificate. Backend auth, multi-tenant data isolation, the
 streaming voice agent, and the frontend have been tested locally (pytest +

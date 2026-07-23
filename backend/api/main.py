@@ -774,6 +774,21 @@ async def dashboard(user: User = Depends(get_current_user)) -> dict[str, Any]:
     }
 
 
+class SPAStaticFiles(StaticFiles):
+    """Serves the built frontend, falling back to index.html for any path
+    that isn't a real static asset -- so React Router client-side routes
+    (e.g. /login, /voice, /history) resolve correctly on a hard navigation
+    or server-initiated redirect, not just on in-app client-side routing.
+    All real API routes are registered above and matched first; this mount
+    only ever sees requests nothing else claimed."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 404:
+            return await super().get_response("index.html", scope)
+        return response
+
+
 static_dir = Path(__file__).resolve().parents[1] / "static"
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+    app.mount("/", SPAStaticFiles(directory=static_dir, html=True), name="frontend")

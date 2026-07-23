@@ -1,13 +1,21 @@
+# Free plan: no payment method required. Tradeoffs vs. starter:
+#   - Web service sleeps after 15 min idle (~30-60s cold start on next hit).
+#     No longer a problem for the scheduler specifically, since
+#     ENABLE_JOB_TRACKER is off below -- there's no daily job that needs the
+#     process alive at a fixed hour.
+#   - The free Postgres database expires 30 days after creation (14-day
+#     grace period after that) and is then deleted. Fine for a demo link;
+#     upgrade the database plan before ~day 30 if this needs to persist.
 databases:
   - name: mindtrack-ai-db
-    plan: starter
+    plan: free
     postgresMajorVersion: "16"
 
 services:
   - type: web
     name: mindtrack-ai
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health

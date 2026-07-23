@@ -27,7 +27,7 @@ services:
       - key: OPENAI_TTS_VOICE
         value: marin
       - key: ENABLE_JOB_TRACKER
-        value: "true"
+        value: "false"
       - key: DATABASE_URL
         fromDatabase:
           name: mindtrack-ai-db

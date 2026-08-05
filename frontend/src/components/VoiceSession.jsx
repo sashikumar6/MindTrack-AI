@@ -40,6 +40,9 @@ export default function VoiceSession({ onComplete, personaMode = "empathetic" })
   const speechRef = useRef(null);
   const vadFrameRef = useRef(null);
   const startingRecordingRef = useRef(false);
+  const sessionIdRef = useRef(null);
+  const endRequestedRef = useRef(false);
+  const requestFinalizeRef = useRef(null);
 
   const pendingAudioBytesRef = useRef([]); // Uint8Array[] for the sentence in flight
   const pendingSentenceTextRef = useRef("");
@@ -114,6 +117,8 @@ export default function VoiceSession({ onComplete, personaMode = "empathetic" })
     pendingAudioBytesRef.current = [];
     pendingSentenceTextRef.current = "";
     pendingTurnDoneRef.current = null;
+    sessionIdRef.current = null;
+    endRequestedRef.current = false;
     isPlayingRef.current = false;
     setPlaybackAnalyser(null);
     setRecordingAnalyser(null);
@@ -128,6 +133,11 @@ export default function VoiceSession({ onComplete, personaMode = "empathetic" })
       setResult(payload);
       setState(payload.safety_event ? "crisis" : "done");
       if (payload.mood_entry && !payload.safety_event) onComplete?.(payload.mood_entry);
+    } else if (endRequestedRef.current) {
+      // If the user tapped End while we were still processing their last
+      // recording, wait until that turn is fully captured before scoring it.
+      endRequestedRef.current = false;
+      requestFinalizeRef.current?.();
     } else {
       setState("recording-ready");
       window.setTimeout(() => startRecording(), 180);
@@ -284,6 +294,7 @@ export default function VoiceSession({ onComplete, personaMode = "empathetic" })
     try {
       await getMicrophoneStream();
       const res = await startMoodSession();
+      sessionIdRef.current = res.session_id;
       const sessionAgentName = res.agent_name || companionNameForPersona(personaMode);
       setAgentName(sessionAgentName);
       setVibe(res.vibe || DEFAULT_VIBE);
@@ -349,6 +360,34 @@ export default function VoiceSession({ onComplete, personaMode = "empathetic" })
     stopSilenceDetection(vadFrameRef);
     const r = recorderRef.current;
     if (r && r.state === "recording") r.stop();
+  };
+
+  const requestFinalize = () => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setError("Connection lost — please start a new check-in.");
+      return;
+    }
+    setError(null);
+    setState("processing");
+    wsRef.current.send(JSON.stringify({ type: "finalize" }));
+  };
+
+  requestFinalizeRef.current = requestFinalize;
+
+  const endCheckin = () => {
+    if (state === "recording") {
+      // Preserve the last spoken thought: the recording is transcribed and
+      // stored first, then the explicit finalize request follows.
+      endRequestedRef.current = true;
+      stopRecording();
+      return;
+    }
+    if (state === "agent" || state === "processing") {
+      endRequestedRef.current = true;
+      return;
+    }
+    if (state === "recording-ready") requestFinalize();
   };
 
   const handleStop = (recorder) => {
@@ -483,6 +522,12 @@ export default function VoiceSession({ onComplete, personaMode = "empathetic" })
                 </button>
               </div>
             </details>
+          ) : null}
+
+          {state !== "idle" && state !== "opening" ? (
+            <button type="button" className="realtime-end-button" onClick={endCheckin}>
+              End check-in
+            </button>
           ) : null}
 
         </>

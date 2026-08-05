@@ -25,30 +25,29 @@ from agents.text_stream import sentence_stream
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 6  # safety cap: agent must finalize by turn 6
-MIN_USER_TURNS_BEFORE_FINALIZE = 2
 FIRST_TURN_FOLLOW_UP = "I hear you. What part of that is staying with you most right now?"
+CONTINUE_CONVERSATION_FOLLOW_UP = (
+    "Thank you for sharing that. What feels most important to say about it right now?"
+)
 
 VALID_VIBES = {"calm", "warm", "energized", "tense", "low"}
 DEFAULT_VIBE = "calm"
 
 CONVERSATION_SYSTEM_PROMPT = """You are a warm, attentive personal mental-health coach having a daily check-in with the user.
 
-Your job each turn is to decide ONE of two actions:
-  1. "ask"      — ask a single focused follow-up question to learn more about how they're really doing
-  2. "finalize" — you have enough to summarize their mood; deliver a brief 2-3 sentence supportive closing
+Your job each turn is to ask one focused follow-up question that helps the user
+say more about how they are doing.
 
 Guidelines:
 - Ask follow-ups when the user's response is short, vague, surface-level, or you don't yet have a clear read on mood / energy / anxiety / what's actually going on.
 - Reference recent history naturally when it helps ("you mentioned the deadline yesterday — still weighing on you?"). Do not invent history.
 - Never ask more than ONE question per turn. Be specific, not generic.
-- Never finalize after the first ordinary user answer. You MUST ask one focused follow-up first, even if you think you have enough context. Finalize only when you have a clear sense of how they're feeling AND what's driving it, normally after 2-3 user turns. Always finalize by turn 6.
-- The closing message should be human, warm, non-clinical, and reference what they actually said. Never preachy.
+- Do not end the conversation, calculate a score, or give a closing summary. The user controls when a check-in ends with the End check-in button.
 - "vibe" is a quick honest read of the emotional energy in the user's LAST message (not your own reply) — recompute it fresh every turn.
 
 Return JSON only:
 {
-  "action": "ask" | "finalize",
+  "action": "ask",
   "message": "<what you say to the user>",
   "reasoning": "<one short sentence: why this action>",
   "vibe": "calm" | "warm" | "energized" | "tense" | "low"
@@ -138,8 +137,7 @@ def _build_messages(
         + CONVERSATION_SYSTEM_PROMPT
         + "\n\n" + persona_directive(persona)
         + "\n\n" + conversation_mode_directive(conversation_mode)
-        + f"\n\nThis is user turn {turn_number} of at most {MAX_TURNS}."
-        + f" {'You MUST finalize now.' if turn_number >= MAX_TURNS else ''}"
+        + f"\n\nThis is user turn {turn_number}."
         + "\n\n" + memory_block
     )
     msgs: list[dict[str, str]] = [{"role": "system", "content": sys}]
@@ -169,30 +167,23 @@ async def _decide(
     except json.JSONDecodeError as exc:
         logger.error("Conversation agent returned invalid JSON: %s", exc)
         return {
-            "action": "finalize" if turn_number >= MAX_TURNS else "ask",
-            "message": (
-                "Thanks for checking in today."
-                if turn_number >= MAX_TURNS
-                else FIRST_TURN_FOLLOW_UP
-            ),
+            "action": "ask",
+            "message": FIRST_TURN_FOLLOW_UP,
             "reasoning": "json parse failure",
             "vibe": DEFAULT_VIBE,
         }
 
-    action = data.get("action") if data.get("action") in ("ask", "finalize") else "finalize"
+    requested_action = data.get("action") if data.get("action") in ("ask", "finalize") else "ask"
+    action = "ask"
     message = str(data.get("message") or "").strip()
-    if not message:
+    if not message or requested_action == "finalize":
+        # A normal conversation never auto-completes. If the model attempted
+        # a closing, replace it with a genuine continuation question.
         message = (
-            "Tell me a bit more about how today felt." if action == "ask"
-            else "Thanks for sharing — talk again tomorrow."
+            FIRST_TURN_FOLLOW_UP
+            if turn_number <= 1
+            else CONTINUE_CONVERSATION_FOLLOW_UP
         )
-    if turn_number >= MAX_TURNS:
-        action = "finalize"
-    elif turn_number < MIN_USER_TURNS_BEFORE_FINALIZE and action == "finalize":
-        # This is enforced in code, not only in the prompt: a model deciding
-        # too early must never turn a single answer into a completed score.
-        action = "ask"
-        message = FIRST_TURN_FOLLOW_UP
     vibe = data.get("vibe") if data.get("vibe") in VALID_VIBES else DEFAULT_VIBE
     return {
         "action": action,
@@ -397,7 +388,7 @@ async def process_turn(
     persona: str = DEFAULT_PERSONA,
     conversation_mode: str = DEFAULT_CONVERSATION_MODE,
 ) -> dict[str, Any]:
-    """User just spoke. Agent decides: ask follow-up, or finalize and extract mood."""
+    """Handle one normal turn. Only an explicit user action can finalize it."""
     sess = _get_session_row(session_id)
     if sess is None or sess.user_id != user_id:
         raise ValueError(f"Unknown session_id: {session_id}")
@@ -435,7 +426,7 @@ async def process_turn(
             "done": False,
         }
 
-    # Finalize: build full transcript, extract mood, save entry, close session.
+    # This branch is reserved for the deterministic immediate-safety path.
     user_text = "\n".join(t["content"] for t in turns if t["role"] == "user")
     mood = (
         {
@@ -541,13 +532,12 @@ async def process_turn_streaming(
     Yields, in order:
       {"type": "vibe", "vibe": <read on the user's last message>}  (once)
       {"type": "text_delta", "text": <sentence or short whole message>}  (1+)
-      {"type": "turn_complete", ...}  -- same shape as process_turn()'s
+      {"type": "turn_complete", ...}  -- active unless safety intervenes
       return value, plus "type", exactly once at the end.
 
-    The "vibe" event is emitted immediately after the ask/finalize decision
-    is made -- before any reply text or audio -- so a live UI can react to
-    the conversation's emotional tone without waiting for the full session
-    to finalize (mood_score/energy/anxiety are only known at finalize).
+    The "vibe" event is emitted immediately after the reply decision is made.
+    Normal turns stay active; scoring happens only after the user explicitly
+    presses End check-in.
     """
     sess = _get_session_row(session_id)
     if sess is None or sess.user_id != user_id:
@@ -633,6 +623,40 @@ async def process_turn_streaming(
 
     result = _persist_finalize(session_id, user_id, user_text, mood, closing, crisis)
     yield {"type": "turn_complete", **result}
+
+
+async def finalize_conversation_session(
+    session_id: int,
+    user_id: int | None = None,
+    persona: str = DEFAULT_PERSONA,
+    conversation_mode: str = DEFAULT_CONVERSATION_MODE,
+) -> dict[str, Any]:
+    """Persist an existing fallback conversation after an explicit user end.
+
+    Unlike the old turn-driven flow, this function is the only normal route
+    that writes a mood score for a WebSocket fallback session.
+    """
+    sess = _get_session_row(session_id)
+    if sess is None or sess.user_id != user_id:
+        raise ValueError(f"Unknown session_id: {session_id}")
+    if sess.status != "active":
+        raise ValueError(f"Session {session_id} is already {sess.status}")
+
+    turns = _load_turns(session_id)
+    user_text = "\n".join(turn["content"] for turn in turns if turn["role"] == "user")
+    if not user_text:
+        raise ValueError("Say something before ending the check-in")
+
+    history = _recent_history(user_id)
+    mood = await extract_mood(user_text)
+    try:
+        closing = await generate_coach_response(
+            mood, _recent_average_from_history(history), persona, conversation_mode
+        )
+    except Exception as exc:
+        logger.warning("Coach response failed during explicit finalize: %s", exc)
+        closing = "Thanks for sharing that with me today."
+    return _persist_finalize(session_id, user_id, user_text, mood, closing, False)
 
 
 def _recent_average_from_history(history: list[dict[str, Any]]) -> dict[str, float | None]:

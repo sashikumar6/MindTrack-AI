@@ -506,6 +506,70 @@ button:focus-visible,
   animation: fadeUp 460ms ease both 150ms;
 }
 
+.wellness-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  padding: 18px 20px;
+  color: var(--text-primary);
+  background: linear-gradient(100deg, rgba(77, 163, 255, 0.12), rgba(167, 139, 250, 0.08));
+  border: 1px solid rgba(77, 163, 255, 0.34);
+  border-radius: 16px;
+}
+
+.wellness-alert-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: var(--mood-color);
+  background: rgba(77, 163, 255, 0.14);
+  border-radius: 50%;
+}
+
+.wellness-alert h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.wellness-alert p,
+.wellness-alert small {
+  display: block;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.wellness-alert small {
+  margin-top: 5px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.wellness-alert-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 9px 12px;
+  color: var(--bg-primary);
+  background: var(--text-primary);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wellness-alert-action:hover { color: var(--bg-primary); }
+
+@media (max-width: 620px) {
+  .wellness-alert { grid-template-columns: auto minmax(0, 1fr); }
+  .wellness-alert-action { grid-column: 2; justify-self: start; }
+}
+
 .overview-action-grid-single {
   grid-template-columns: 1fr;
 }

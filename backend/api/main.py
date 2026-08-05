@@ -32,6 +32,7 @@ import metrics
 from agents.job_tracker_agent import scan_gmail
 from agents.mood_agent import run_mood_pipeline
 from agents.mood_conversation import (
+    finalize_conversation_session,
     finalize_realtime_session,
     get_session_transcript,
     list_sessions,
@@ -42,6 +43,7 @@ from agents.mood_conversation import (
 )
 from agents.personas import DEFAULT_CONVERSATION_MODE, DEFAULT_PERSONA
 from agents.safety import contains_crisis_language
+from agents.wellness_alerts import assess_wellness_pattern
 from auth.deps import get_current_user, get_current_user_optional, get_current_user_ws
 from auth.routes import router as auth_router
 from config.settings import settings
@@ -671,6 +673,34 @@ async def mood_session_ws(websocket: WebSocket, session_id: int) -> None:
             msg = await websocket.receive_json()
             msg_type = msg.get("type")
 
+            if msg_type == "finalize":
+                try:
+                    result = await finalize_conversation_session(
+                        session_id, user_id, persona, mode
+                    )
+                    sentence = result["agent_message"]
+                    await websocket.send_json({"type": "text_delta", "text": sentence})
+                    seq = 0
+                    async for chunk in synthesize_stream(sentence, voice):
+                        await websocket.send_json(
+                            {
+                                "type": "audio_chunk",
+                                "seq": seq,
+                                "data": base64.b64encode(chunk).decode("ascii"),
+                            }
+                        )
+                        seq += 1
+                    await websocket.send_json({"type": "sentence_done"})
+                    await websocket.send_json({"type": "turn_done", **result})
+                except ValueError as exc:
+                    await websocket.send_json({"type": "error", "detail": str(exc)})
+                except Exception:
+                    logger.exception("Explicit conversation finalization failed for %s", session_id)
+                    await websocket.send_json(
+                        {"type": "error", "detail": "Couldn't save this check-in."}
+                    )
+                continue
+
             if msg_type == "text_turn":
                 text = str(msg.get("text") or "").strip()
                 if not text:
@@ -850,6 +880,42 @@ async def mood_stats(
             for i in range(days)
         ]
     return await _mood_stats(user.id, days)
+
+
+@app.get("/mood/wellness-alert")
+async def mood_wellness_alert(
+    user: User | None = Depends(get_current_user_optional),
+) -> dict[str, Any]:
+    """Surface an explainable, non-clinical pattern notice from saved scores.
+
+    This endpoint never emits crisis guidance. Immediate-safety handling stays
+    tied to explicit conversation language in the dedicated safety flow.
+    """
+    if user is None:
+        return {"active": False}
+    with get_session() as session:
+        rows = (
+            session.execute(
+                select(MoodEntry)
+                .where(
+                    MoodEntry.user_id == user.id,
+                    MoodEntry.created_at <= datetime.utcnow(),
+                )
+                .order_by(MoodEntry.created_at.desc())
+                .limit(7)
+            )
+            .scalars()
+            .all()
+        )
+    entries = [
+        {
+            "mood": row.mood_score,
+            "energy": row.energy_level,
+            "anxiety": row.anxiety_level,
+        }
+        for row in reversed(rows)
+    ]
+    return assess_wellness_pattern(entries)
 
 
 @app.get("/mood/weekly")

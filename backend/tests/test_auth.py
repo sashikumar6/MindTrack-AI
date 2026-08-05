@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -69,6 +71,37 @@ def test_mood_history_anonymous_returns_empty():
     response = client.get("/mood/history")
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_wellness_alert_returns_an_explainable_sustained_change():
+    user = _make_user("wellness-pattern@example.com")
+    now = datetime.utcnow()
+    with get_session() as session:
+        for days_ago, mood, energy, anxiety in (
+            (2, 7, 7, 3),
+            (1, 5, 5, 5),
+            (0, 3, 3, 7),
+        ):
+            session.add(
+                MoodEntry(
+                    user_id=user.id,
+                    created_at=now - timedelta(days=days_ago),
+                    raw_transcript="test check-in",
+                    mood_score=mood,
+                    energy_level=energy,
+                    anxiety_level=anxiety,
+                )
+            )
+
+    client = TestClient(app)
+    app.dependency_overrides[get_current_user_optional] = lambda: user
+    try:
+        response = client.get("/mood/wellness-alert")
+        assert response.status_code == 200
+        assert response.json()["kind"] == "sustained_change"
+        assert response.json()["data_points"] == 3
+    finally:
+        app.dependency_overrides.pop(get_current_user_optional, None)
 
 
 def test_jobs_isolated_between_users_including_same_email_id():

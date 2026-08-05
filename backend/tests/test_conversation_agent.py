@@ -84,7 +84,7 @@ def test_decide_falls_back_to_calm_on_invalid_vibe(monkeypatch):
     assert decision["vibe"] == "calm"
 
 
-def test_decide_never_finalizes_an_ordinary_first_answer(monkeypatch):
+def test_decide_never_auto_finalizes_a_normal_conversation(monkeypatch):
     payload = json.dumps(
         {
             "action": "finalize",
@@ -95,10 +95,10 @@ def test_decide_never_finalizes_an_ordinary_first_answer(monkeypatch):
     )
     monkeypatch.setattr(mood_conversation, "_client", lambda: _FakeClient(payload))
 
-    decision = asyncio.run(mood_conversation._decide([], [], 1))
+    decision = asyncio.run(mood_conversation._decide([], [], 5))
 
     assert decision["action"] == "ask"
-    assert decision["message"] == mood_conversation.FIRST_TURN_FOLLOW_UP
+    assert decision["message"] == mood_conversation.CONTINUE_CONVERSATION_FOLLOW_UP
 
 
 def test_conversation_prompt_uses_selected_companion_name():
@@ -171,6 +171,34 @@ def test_process_turn_streaming_crisis_emits_tense_vibe():
     events = asyncio.run(collect())
     assert events[0]["type"] == "vibe"
     assert events[0]["vibe"] == "tense"
+
+
+def test_explicit_finalize_is_the_only_normal_score_path(monkeypatch):
+    session_id = _make_session(user_id=None)
+    mood_conversation._persist_turn(session_id, "agent", "How are you today?")
+    mood_conversation._persist_turn(session_id, "user", "I am anxious about my presentation.")
+
+    async def fake_extract(text):
+        assert "presentation" in text
+        return {
+            "mood_score": 5,
+            "energy_level": 5,
+            "anxiety_level": 7,
+            "keywords": ["presentation"],
+            "summary": "Anxious about a presentation.",
+        }
+
+    async def fake_coach(*args, **kwargs):
+        return "Thanks for checking in."
+
+    monkeypatch.setattr(mood_conversation, "extract_mood", fake_extract)
+    monkeypatch.setattr(mood_conversation, "generate_coach_response", fake_coach)
+
+    result = asyncio.run(mood_conversation.finalize_conversation_session(session_id))
+
+    assert result["done"] is True
+    assert result["safety_event"] is False
+    assert result["mood_entry"]["anxiety_level"] == 7
 
 
 def test_finalize_realtime_session_extracts_without_generating_second_reply(monkeypatch):

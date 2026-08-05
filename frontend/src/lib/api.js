@@ -28,6 +28,8 @@ export const fetchMoodStats = (days = 7) =>
   api.get(`/mood/stats?days=${days}`).then((r) => r.data);
 export const fetchMoodHistory = (days = 30, limit = 30) =>
   api.get(`/mood/history?days=${days}&limit=${limit}`).then((r) => r.data);
+export const fetchWellnessAlert = () =>
+  api.get("/mood/wellness-alert").then((r) => r.data);
 
 export const startMoodSession = () =>
   api.post("/mood/session/start").then((r) => r.data);

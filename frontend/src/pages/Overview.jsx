@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Leaf, Lightbulb } from "lucide-react";
+import { AlertCircle, ArrowRight, Leaf, Lightbulb } from "lucide-react";
 import { Link } from "react-router-dom";
 import ActivityRings from "../components/ActivityRings.jsx";
 import MoodGraph from "../components/MoodGraph.jsx";
 import Skeleton from "../components/Skeleton.jsx";
-import { fetchMoodHistory, fetchMoodStats } from "../lib/api.js";
+import { fetchMoodHistory, fetchMoodStats, fetchWellnessAlert } from "../lib/api.js";
 
 export default function Overview() {
   const [stats, setStats] = useState([]);
   const [history, setHistory] = useState([]);
+  const [wellnessAlert, setWellnessAlert] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [reflectionOpen, setReflectionOpen] = useState(false);
@@ -17,12 +18,14 @@ export default function Overview() {
     setLoading(true);
     setError(null);
     try {
-      const [moodStats, moodHistory] = await Promise.all([
+      const [moodStats, moodHistory, alert] = await Promise.all([
         fetchMoodStats(7),
         fetchMoodHistory(30, 30),
+        fetchWellnessAlert(),
       ]);
       setStats(moodStats);
       setHistory(moodHistory);
+      setWellnessAlert(alert);
     } catch (requestError) {
       setError(requestError.message || "Failed to load your week");
     } finally {
@@ -48,6 +51,18 @@ export default function Overview() {
           tracks your mood and energy over time.
         </p>
       </div>
+
+      {wellnessAlert?.active ? (
+        <section className="wellness-alert" aria-live="polite">
+          <span className="wellness-alert-icon"><AlertCircle size={20} /></span>
+          <div>
+            <h2>{wellnessAlert.title}</h2>
+            <p>{wellnessAlert.message}</p>
+            <small>{wellnessAlert.reason} This is a wellness pattern notice, not a clinical assessment.</small>
+          </div>
+          <Link to="/voice" className="wellness-alert-action">Talk it out <ArrowRight size={16} /></Link>
+        </section>
+      ) : null}
 
       <div className="overview-action-grid overview-action-grid-single">
         <Link to="/voice" className="checkin-card">

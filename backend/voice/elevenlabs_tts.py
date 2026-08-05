@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
+import metrics
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -93,12 +95,18 @@ async def synthesize(text: str, voice: str | None = None) -> bytes:
         return b""
     provider = settings.TTS_PROVIDER.strip().lower()
     if provider == "openai":
-        return await _synthesize_openai(text, voice)
+        started = time.monotonic()
+        result = await _synthesize_openai(text, voice)
+        metrics.record("tts_openai_ms", (time.monotonic() - started) * 1000)
+        return result
     if provider == "elevenlabs":
         if not settings.ELEVENLABS_API_KEY:
             logger.warning("TTS_PROVIDER=elevenlabs but ELEVENLABS_API_KEY is empty")
             return b""
-        return await _synthesize_elevenlabs(text)
+        started = time.monotonic()
+        result = await _synthesize_elevenlabs(text)
+        metrics.record("tts_elevenlabs_ms", (time.monotonic() - started) * 1000)
+        return result
     logger.warning("Unsupported TTS_PROVIDER: %s", settings.TTS_PROVIDER)
     return b""
 
@@ -158,14 +166,24 @@ async def synthesize_stream(text: str, voice: str | None = None) -> AsyncIterato
         return
     provider = settings.TTS_PROVIDER.strip().lower()
     if provider == "openai":
+        started = time.monotonic()
+        first = True
         async for chunk in _synthesize_openai_stream(text, voice):
+            if first:
+                metrics.record("tts_openai_ttfb_ms", (time.monotonic() - started) * 1000)
+                first = False
             yield chunk
         return
     if provider == "elevenlabs":
         if not settings.ELEVENLABS_API_KEY:
             logger.warning("TTS_PROVIDER=elevenlabs but ELEVENLABS_API_KEY is empty")
             return
+        started = time.monotonic()
+        first = True
         async for chunk in _synthesize_elevenlabs_stream(text):
+            if first:
+                metrics.record("tts_elevenlabs_ttfb_ms", (time.monotonic() - started) * 1000)
+                first = False
             yield chunk
         return
     logger.warning("Unsupported TTS_PROVIDER: %s", settings.TTS_PROVIDER)

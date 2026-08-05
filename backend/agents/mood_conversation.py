@@ -26,6 +26,8 @@ from agents.text_stream import sentence_stream
 logger = logging.getLogger(__name__)
 
 MAX_TURNS = 6  # safety cap: agent must finalize by turn 6
+MIN_USER_TURNS_BEFORE_FINALIZE = 2
+FIRST_TURN_FOLLOW_UP = "I hear you. What part of that is staying with you most right now?"
 
 VALID_VIBES = {"calm", "warm", "energized", "tense", "low"}
 DEFAULT_VIBE = "calm"
@@ -40,7 +42,7 @@ Guidelines:
 - Ask follow-ups when the user's response is short, vague, surface-level, or you don't yet have a clear read on mood / energy / anxiety / what's actually going on.
 - Reference recent history naturally when it helps ("you mentioned the deadline yesterday — still weighing on you?"). Do not invent history.
 - Never ask more than ONE question per turn. Be specific, not generic.
-- Finalize when you have a clear sense of how they're feeling AND what's driving it. Typically after 2-3 user turns. Always finalize by turn 6.
+- Never finalize after the first ordinary user answer. You MUST ask one focused follow-up first, even if you think you have enough context. Finalize only when you have a clear sense of how they're feeling AND what's driving it, normally after 2-3 user turns. Always finalize by turn 6.
 - The closing message should be human, warm, non-clinical, and reference what they actually said. Never preachy.
 - "vibe" is a quick honest read of the emotional energy in the user's LAST message (not your own reply) — recompute it fresh every turn.
 
@@ -111,6 +113,13 @@ def _recent_history(
     ]
 
 
+def recent_history(
+    user_id: int | None, days: int = 14, limit: int = 7
+) -> list[dict[str, Any]]:
+    """Public read-only history helper for preconfigured Realtime sessions."""
+    return _recent_history(user_id, days, limit)
+
+
 def _build_messages(
     history: list[dict[str, Any]],
     turns: list[dict[str, str]],
@@ -160,8 +169,12 @@ async def _decide(
     except json.JSONDecodeError as exc:
         logger.error("Conversation agent returned invalid JSON: %s", exc)
         return {
-            "action": "finalize",
-            "message": "Thanks for checking in today.",
+            "action": "finalize" if turn_number >= MAX_TURNS else "ask",
+            "message": (
+                "Thanks for checking in today."
+                if turn_number >= MAX_TURNS
+                else FIRST_TURN_FOLLOW_UP
+            ),
             "reasoning": "json parse failure",
             "vibe": DEFAULT_VIBE,
         }
@@ -175,6 +188,11 @@ async def _decide(
         )
     if turn_number >= MAX_TURNS:
         action = "finalize"
+    elif turn_number < MIN_USER_TURNS_BEFORE_FINALIZE and action == "finalize":
+        # This is enforced in code, not only in the prompt: a model deciding
+        # too early must never turn a single answer into a completed score.
+        action = "ask"
+        message = FIRST_TURN_FOLLOW_UP
     vibe = data.get("vibe") if data.get("vibe") in VALID_VIBES else DEFAULT_VIBE
     return {
         "action": action,
@@ -266,6 +284,109 @@ async def start_session(
         "agent_message": decision["message"],
         "status": "active",
         "vibe": DEFAULT_VIBE,
+    }
+
+
+async def finalize_realtime_session(
+    turns: list[dict[str, str]],
+    user_id: int | None = None,
+) -> dict[str, Any]:
+    """Extract and persist a completed native Realtime conversation.
+
+    Realtime already produced the spoken companion response, so this path
+    intentionally runs only mood extraction. It does not make a second coach
+    or TTS call after the live conversation ends.
+    """
+    clean_turns = [
+        {"role": turn["role"], "content": turn["content"].strip()}
+        for turn in turns
+        if turn.get("role") in {"user", "agent"} and turn.get("content", "").strip()
+    ]
+    user_text = "\n".join(
+        turn["content"] for turn in clean_turns if turn["role"] == "user"
+    )
+    if not user_text:
+        raise ValueError("No user transcript to finalize")
+
+    crisis = contains_crisis_language(user_text)
+    mood = (
+        {
+            "mood_score": 1,
+            "energy_level": 1,
+            "anxiety_level": 10,
+            "keywords": ["immediate safety concern"],
+            "summary": "The check-in contains language indicating a possible immediate safety concern.",
+        }
+        if crisis
+        else await extract_mood(user_text)
+    )
+    agent_response = (
+        CRISIS_RESPONSE
+        if crisis
+        else next(
+            (
+                turn["content"]
+                for turn in reversed(clean_turns)
+                if turn["role"] == "agent"
+            ),
+            "Realtime voice check-in completed.",
+        )
+    )
+
+    entry_id = None
+    session_id = None
+    created_at = datetime.utcnow()
+    if user_id is not None:
+        with get_session() as session:
+            entry = MoodEntry(
+                user_id=user_id,
+                raw_transcript=user_text,
+                mood_score=mood["mood_score"],
+                energy_level=mood["energy_level"],
+                anxiety_level=mood["anxiety_level"],
+                keywords=",".join(mood["keywords"]),
+                summary=mood["summary"],
+                agent_response=agent_response,
+            )
+            session.add(entry)
+            session.flush()
+            entry_id = entry.id
+            created_at = entry.created_at
+
+            realtime_session = MoodSession(
+                user_id=user_id,
+                status="completed",
+                ended_at=datetime.utcnow(),
+                mood_entry_id=entry_id,
+            )
+            session.add(realtime_session)
+            session.flush()
+            session_id = realtime_session.id
+            session.add_all(
+                ConversationTurn(
+                    session_id=session_id,
+                    role=turn["role"],
+                    content=turn["content"],
+                )
+                for turn in clean_turns
+            )
+
+    return {
+        "session_id": session_id,
+        "status": "completed",
+        "done": True,
+        "safety_event": crisis,
+        "mood_entry": {
+            "id": entry_id,
+            "created_at": created_at.isoformat() if created_at else None,
+            "transcript": user_text,
+            "mood_score": mood["mood_score"],
+            "energy_level": mood["energy_level"],
+            "anxiety_level": mood["anxiety_level"],
+            "keywords": mood["keywords"],
+            "summary": mood["summary"],
+            "agent_response": agent_response,
+        },
     }
 
 

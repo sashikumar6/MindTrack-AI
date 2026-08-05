@@ -32,9 +32,29 @@ export const fetchMoodHistory = (days = 30, limit = 30) =>
 export const startMoodSession = () =>
   api.post("/mood/session/start").then((r) => r.data);
 
+export const createRealtimeCall = (sdp) =>
+  api
+    .post("/mood/realtime/call", sdp, {
+      headers: { "Content-Type": "application/sdp" },
+      responseType: "text",
+      transformRequest: [(data) => data],
+    })
+    .then((r) => r.data);
+
+export const checkRealtimeSafety = (text) =>
+  api.post("/mood/realtime/safety", { text }).then((r) => r.data);
+
+export const finalizeRealtimeCheckin = (turns) =>
+  api.post("/mood/realtime/finalize", { turns }).then((r) => r.data);
+
 export const fetchMoodSessions = (limit = 30, before) =>
   api
     .get("/mood/sessions", { params: { limit, before } })
     .then((r) => r.data);
 export const fetchMoodSessionTranscript = (sessionId) =>
   api.get(`/mood/session/${sessionId}`).then((r) => r.data);
+
+// Fire-and-forget: latency reporting should never affect the live voice
+// session, so failures (offline, rate limited, etc.) are swallowed.
+export const reportVoiceLatency = (metric, ms) =>
+  api.post("/metrics/voice-latency", { metric, ms }).catch(() => {});

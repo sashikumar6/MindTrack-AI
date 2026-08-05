@@ -526,7 +526,7 @@ const ORB_CONFIG = {
     gradient: "radial-gradient(circle at 35% 30%, #9ccaff, #4da3ff 45%, #34d399 100%)",
     animation: "breathe 1.1s ease-in-out infinite",
     glow: "0 0 90px rgba(77,163,255,0.6)",
-    label: () => "Listening… I'll send when you pause",
+    label: () => "Listening… take your time, or tap when you're done",
     clickable: true,
   },
   processing: {
@@ -577,6 +577,7 @@ function startSilenceDetection(analyser, recorder, frameRef, onSilence) {
   let voicedSince = null;
   let speechStarted = false;
   let lastSpeechAt = null;
+  let speechStartedAt = null;
 
   const tick = () => {
     if (recorder.state !== "recording") {
@@ -601,6 +602,7 @@ function startSilenceDetection(analyser, recorder, frameRef, onSilence) {
         if (now - voicedSince >= 140) {
           speechStarted = true;
           lastSpeechAt = now;
+          speechStartedAt = now;
         }
       } else {
         voicedSince = null;
@@ -609,7 +611,12 @@ function startSilenceDetection(analyser, recorder, frameRef, onSilence) {
       const continueThreshold = Math.max(0.018, noiseFloor * 1.7);
       if (rms >= continueThreshold) {
         lastSpeechAt = now;
-      } else if (now - lastSpeechAt >= 1300) {
+      } else if (
+        // Fallback recording mode is intentionally conservative. Natural
+        // pauses are common in a reflective conversation; the user can tap
+        // the orb to send immediately when they are actually finished.
+        now - lastSpeechAt >= 2200 && now - speechStartedAt >= 900
+      ) {
         stopSilenceDetection(frameRef);
         onSilence();
         return;
@@ -659,7 +666,7 @@ function playDeviceSpeech(text, agentName, speechRef) {
   });
 }
 
-function SummaryCard({ entry, onReset }) {
+export function SummaryCard({ entry, onReset }) {
   if (!entry) return null;
   return (
     <div style={summaryCard}>
@@ -686,7 +693,7 @@ function SummaryCard({ entry, onReset }) {
   );
 }
 
-function CrisisCard({ onContinue }) {
+export function CrisisCard({ onContinue }) {
   return (
     <div style={crisisCard}>
       <div style={crisisIcon} />

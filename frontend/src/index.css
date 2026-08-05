@@ -461,6 +461,7 @@ button:focus-visible,
 
 .trend-legend {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   color: var(--text-secondary);
   font-size: 12px;
@@ -1112,6 +1113,37 @@ button:focus-visible,
   border: 1px solid rgba(255, 92, 92, 0.45);
   border-radius: 8px;
   font-size: 12px;
+}
+
+.realtime-end-button {
+  width: fit-content;
+  margin: 18px auto 0;
+  padding: 8px 14px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.realtime-end-button:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.realtime-fallback-note {
+  width: fit-content;
+  margin: 0 auto 16px;
+  padding: 6px 10px;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
 }
 
 .history-intro h1,

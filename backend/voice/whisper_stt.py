@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
 
+import metrics
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -61,8 +63,13 @@ async def _transcribe_openai(audio_path: Path) -> str:
 async def transcribe(audio_path: Path) -> str:
     """Transcribe an audio file using the configured provider."""
     provider = settings.STT_PROVIDER.strip().lower()
-    if provider == "openai":
-        return await _transcribe_openai(audio_path)
-    if provider == "local":
+    if provider not in ("openai", "local"):
+        raise ValueError(f"Unsupported STT_PROVIDER: {settings.STT_PROVIDER}")
+
+    started = time.monotonic()
+    try:
+        if provider == "openai":
+            return await _transcribe_openai(audio_path)
         return await _transcribe_local(audio_path)
-    raise ValueError(f"Unsupported STT_PROVIDER: {settings.STT_PROVIDER}")
+    finally:
+        metrics.record(f"stt_{provider}_ms", (time.monotonic() - started) * 1000)

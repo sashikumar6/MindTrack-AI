@@ -4,6 +4,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     OPENAI_API_KEY: str
     OPENAI_FINETUNED_MODEL: str = ""
+    OPENAI_REALTIME_MODEL: str = "gpt-realtime-2.1-mini"
+    OPENAI_REALTIME_TRANSCRIPTION_MODEL: str = "gpt-live-transcribe"
+    OPENAI_REALTIME_TRANSCRIPTION_DELAY: str = "minimal"
+    # Semantic VAD prevents ordinary mid-sentence pauses from being treated as
+    # the end of a turn. "low" deliberately favors a complete user thought
+    # over the smallest possible turn-taking delay.
+    OPENAI_REALTIME_VAD_EAGERNESS: str = "low"
     OPENAI_TRANSCRIPTION_MODEL: str = "gpt-4o-mini-transcribe"
     MOOD_EXTRACTOR_MODEL: str = "gpt-4o-mini"
     COACH_MODEL: str = "gpt-4o"

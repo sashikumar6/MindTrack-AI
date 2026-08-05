@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { AppHeader } from "../components/AppShell.jsx";
-import VoiceSession from "../components/VoiceSession.jsx";
+import RealtimeVoiceSession from "../components/RealtimeVoiceSession.jsx";
 import { useAuth } from "../lib/AuthContext.jsx";
 import { companionForPersona } from "../lib/companions.js";
 
@@ -33,7 +33,11 @@ export default function VoiceAgentPage() {
         <section className="voice-conversation-panel">
           <div className="voice-page-glow" />
           <div className="voice-stage voice-stage-embedded">
-            <VoiceSession onComplete={() => {}} personaMode={user.persona_mode} />
+            <RealtimeVoiceSession
+              key={`${user.persona_mode}-${user.conversation_mode}-${user.tts_voice}`}
+              onComplete={() => {}}
+              personaMode={user.persona_mode}
+            />
           </div>
           <footer className="voice-page-footer">
             <p className="voice-disclaimer">
@@ -53,7 +57,7 @@ export default function VoiceAgentPage() {
       </div>
       <Link to="/login" className="voice-back">← MindTrack</Link>
       <div className="voice-stage">
-        <VoiceSession onComplete={() => {}} />
+        <RealtimeVoiceSession onComplete={() => {}} />
       </div>
       <footer className="voice-page-footer">
         <Link to="/login" className="voice-persona-link">

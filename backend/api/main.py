@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 import tempfile
 import time
@@ -26,16 +28,20 @@ from starlette.middleware.sessions import SessionMiddleware
 
 import base64
 
+import metrics
 from agents.job_tracker_agent import scan_gmail
 from agents.mood_agent import run_mood_pipeline
 from agents.mood_conversation import (
+    finalize_realtime_session,
     get_session_transcript,
     list_sessions,
     process_turn,
     process_turn_streaming,
+    recent_history,
     start_session,
 )
 from agents.personas import DEFAULT_CONVERSATION_MODE, DEFAULT_PERSONA
+from agents.safety import contains_crisis_language
 from auth.deps import get_current_user, get_current_user_optional, get_current_user_ws
 from auth.routes import router as auth_router
 from config.settings import settings
@@ -44,6 +50,7 @@ from db.models import JobMetric, MoodEntry, User
 from scheduler.cron import shutdown as scheduler_shutdown
 from scheduler.cron import start as scheduler_start
 from voice.elevenlabs_tts import OPENAI_TTS_VOICES, synthesize, synthesize_stream
+from voice.realtime import build_realtime_session, create_realtime_call
 from voice.whisper_stt import transcribe
 
 logger = logging.getLogger(__name__)
@@ -154,6 +161,19 @@ class VoicePreviewRequest(BaseModel):
     voice: str
 
 
+class RealtimeSafetyRequest(BaseModel):
+    text: str
+
+
+class RealtimeTurn(BaseModel):
+    role: str
+    content: str
+
+
+class RealtimeFinalizeRequest(BaseModel):
+    turns: list[RealtimeTurn]
+
+
 def _serialize_job(row: JobMetric) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -186,6 +206,36 @@ def _serialize_mood(row: MoodEntry) -> dict[str, Any]:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ---------- Voice latency metrics ----------
+# STT/TTS timing is recorded server-side directly in voice/whisper_stt.py and
+# voice/elevenlabs_tts.py. Realtime (WebRTC) time-to-first-audio is only
+# observable client-side (see RealtimeVoiceSession.jsx), so the client POSTs
+# each sample here instead. In-memory only (see metrics.py) -- a restart
+# clears history, which is fine for a demo deployment's p50/p95 view.
+
+_CLIENT_REPORTABLE_METRICS = {"realtime_ttfa"}
+
+
+class VoiceLatencyReport(BaseModel):
+    metric: str
+    ms: float
+
+
+@app.post("/metrics/voice-latency")
+async def report_voice_latency(body: VoiceLatencyReport) -> dict[str, str]:
+    if body.metric not in _CLIENT_REPORTABLE_METRICS:
+        raise HTTPException(status_code=422, detail=f"Unknown metric: {body.metric}")
+    if not (0 <= body.ms <= 60_000):
+        raise HTTPException(status_code=422, detail="ms out of range")
+    metrics.record(body.metric, body.ms)
+    return {"status": "recorded"}
+
+
+@app.get("/metrics/voice-latency")
+async def get_voice_latency() -> dict[str, dict[str, float | int]]:
+    return metrics.snapshot()
 
 
 # ---------- Jobs ----------
@@ -500,6 +550,102 @@ def _origin_allowed(origin: str | None) -> bool:
         # non-browser callers, which is fine to allow.
         return True
     return origin in _ALLOWED_WS_ORIGINS
+
+
+def _realtime_safety_identifier(user_id: int | None) -> str | None:
+    if user_id is None:
+        return None
+    return hmac.new(
+        settings.SESSION_SECRET_KEY.encode("utf-8"),
+        f"mindtrack-user:{user_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+@app.post("/mood/realtime/call")
+async def mood_realtime_call(
+    request: Request,
+    user: User | None = Depends(get_current_user_optional),
+) -> Response:
+    """Create a native WebRTC speech-to-speech session.
+
+    Only SDP crosses FastAPI during setup. The standard OpenAI API key stays
+    server-side and live media travels directly between browser and OpenAI.
+    """
+    if not _origin_allowed(request.headers.get("origin")):
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+    if "application/sdp" not in request.headers.get("content-type", ""):
+        raise HTTPException(status_code=415, detail="Expected application/sdp")
+    raw_sdp = await request.body()
+    if not raw_sdp or len(raw_sdp) > 128 * 1024:
+        raise HTTPException(status_code=400, detail="Invalid SDP offer")
+    try:
+        sdp = raw_sdp.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid SDP encoding") from exc
+
+    persona, voice, mode = _companion_preferences(user)
+    session_config = build_realtime_session(
+        persona,
+        mode,
+        voice,
+        recent_history(user.id if user else None),
+    )
+    try:
+        result = await create_realtime_call(
+            sdp,
+            session_config,
+            _realtime_safety_identifier(user.id if user else None),
+        )
+    except Exception as exc:
+        logger.exception("Realtime WebRTC session creation failed")
+        raise HTTPException(
+            status_code=502, detail="Realtime voice is temporarily unavailable"
+        ) from exc
+    if result.status_code >= 400:
+        logger.error(
+            "OpenAI Realtime call failed (%s): %s",
+            result.status_code,
+            result.body[:500],
+        )
+        raise HTTPException(
+            status_code=502, detail="Realtime voice is temporarily unavailable"
+        )
+    return Response(content=result.body, media_type="application/sdp")
+
+
+@app.post("/mood/realtime/safety")
+async def mood_realtime_safety(body: RealtimeSafetyRequest) -> dict[str, bool]:
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty transcript")
+    if len(text) > settings.MAX_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="Transcript is too long")
+    return {"safety_event": contains_crisis_language(text)}
+
+
+@app.post("/mood/realtime/finalize")
+async def mood_realtime_finalize(
+    body: RealtimeFinalizeRequest,
+    user: User | None = Depends(get_current_user_optional),
+) -> dict[str, Any]:
+    if not body.turns or len(body.turns) > 24:
+        raise HTTPException(status_code=400, detail="Invalid realtime transcript")
+    turns: list[dict[str, str]] = []
+    total_chars = 0
+    for turn in body.turns:
+        role = turn.role.strip()
+        content = turn.content.strip()
+        if role not in {"user", "agent"} or not content:
+            raise HTTPException(status_code=400, detail="Invalid realtime turn")
+        total_chars += len(content)
+        turns.append({"role": role, "content": content})
+    if total_chars > settings.MAX_TEXT_CHARS * 6:
+        raise HTTPException(status_code=413, detail="Realtime transcript is too long")
+    try:
+        return await finalize_realtime_session(turns, user.id if user else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.websocket("/ws/mood/session/{session_id}")

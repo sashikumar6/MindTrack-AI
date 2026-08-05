@@ -84,6 +84,23 @@ def test_decide_falls_back_to_calm_on_invalid_vibe(monkeypatch):
     assert decision["vibe"] == "calm"
 
 
+def test_decide_never_finalizes_an_ordinary_first_answer(monkeypatch):
+    payload = json.dumps(
+        {
+            "action": "finalize",
+            "message": "Here is your score.",
+            "reasoning": "incorrectly early",
+            "vibe": "warm",
+        }
+    )
+    monkeypatch.setattr(mood_conversation, "_client", lambda: _FakeClient(payload))
+
+    decision = asyncio.run(mood_conversation._decide([], [], 1))
+
+    assert decision["action"] == "ask"
+    assert decision["message"] == mood_conversation.FIRST_TURN_FOLLOW_UP
+
+
 def test_conversation_prompt_uses_selected_companion_name():
     messages = mood_conversation._build_messages([], [], 1, persona="logical")
     assert "Your name is Atlas." in messages[0]["content"]
@@ -154,3 +171,30 @@ def test_process_turn_streaming_crisis_emits_tense_vibe():
     events = asyncio.run(collect())
     assert events[0]["type"] == "vibe"
     assert events[0]["vibe"] == "tense"
+
+
+def test_finalize_realtime_session_extracts_without_generating_second_reply(monkeypatch):
+    async def fake_extract(text):
+        assert text == "Today felt steady."
+        return {
+            "mood_score": 7,
+            "energy_level": 6,
+            "anxiety_level": 3,
+            "keywords": ["steady"],
+            "summary": "A steady day.",
+        }
+
+    monkeypatch.setattr(mood_conversation, "extract_mood", fake_extract)
+    result = asyncio.run(
+        mood_conversation.finalize_realtime_session(
+            [
+                {"role": "agent", "content": "Hi, I'm Jeni. How are you?"},
+                {"role": "user", "content": "Today felt steady."},
+                {"role": "agent", "content": "I'm glad there was some steadiness."},
+            ]
+        )
+    )
+    assert result["done"] is True
+    assert result["safety_event"] is False
+    assert result["mood_entry"]["mood_score"] == 7
+    assert result["mood_entry"]["agent_response"] == "I'm glad there was some steadiness."

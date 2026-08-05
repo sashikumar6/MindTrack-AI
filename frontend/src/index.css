@@ -841,6 +841,21 @@ button:focus-visible,
   width: min(1240px, 100%);
 }
 
+.voice-agent-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 65% 46% at 50% 62%, rgba(77, 163, 255, 0.12), transparent 72%),
+    var(--bg-primary);
+}
+
+/* The voice experience is one continuous sanctuary, not a card below the
+   dashboard header. Keep the navigation usable without drawing a hard seam
+   above the orb. */
+.voice-agent-shell .app-header {
+  background: rgba(6, 7, 10, 0.78);
+  border-bottom-color: transparent;
+}
+
 .voice-agent-intro {
   display: flex;
   align-items: flex-end;
@@ -929,14 +944,14 @@ button:focus-visible,
 .voice-conversation-panel {
   width: 100%;
   min-height: calc(100vh - 260px);
-  margin-top: 24px;
+  margin-top: 0;
   position: relative;
   display: flex;
   flex-direction: column;
   /* Captions can grow during a live conversation; hiding overflow also hid
      the type and finish controls below them. */
   overflow: visible;
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 .voice-stage-embedded {
@@ -961,8 +976,8 @@ button:focus-visible,
 .voice-page-glow {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 42%, rgba(77, 163, 255, 0.14), transparent 48%);
-  opacity: 0.7;
+  background: radial-gradient(ellipse 52% 52% at 50% 44%, rgba(77, 163, 255, 0.12), transparent 74%);
+  opacity: 0.8;
   pointer-events: none;
 }
 

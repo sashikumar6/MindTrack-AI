@@ -7,10 +7,13 @@ class Settings(BaseSettings):
     OPENAI_REALTIME_MODEL: str = "gpt-realtime-2.1-mini"
     OPENAI_REALTIME_TRANSCRIPTION_MODEL: str = "gpt-live-transcribe"
     OPENAI_REALTIME_TRANSCRIPTION_DELAY: str = "minimal"
-    # Semantic VAD prevents ordinary mid-sentence pauses from being treated as
-    # the end of a turn. "low" deliberately favors a complete user thought
-    # over the smallest possible turn-taking delay.
-    OPENAI_REALTIME_VAD_EAGERNESS: str = "low"
+    # "medium" is semantic VAD's balanced default: it handles natural pauses
+    # without leaving the user in a listening state for an excessive time.
+    OPENAI_REALTIME_VAD_EAGERNESS: str = "medium"
+    # Comma-separated expected spoken languages. This is passed as `languages`
+    # for gpt-live-transcribe, preventing noisy English from being rendered as
+    # an unrelated language in the UI transcript.
+    OPENAI_REALTIME_TRANSCRIPTION_LANGUAGES: str = "en"
     OPENAI_TRANSCRIPTION_MODEL: str = "gpt-4o-mini-transcribe"
     MOOD_EXTRACTOR_MODEL: str = "gpt-4o-mini"
     COACH_MODEL: str = "gpt-4o"

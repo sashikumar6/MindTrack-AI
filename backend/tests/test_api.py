@@ -21,7 +21,7 @@ def test_session_transcripts_require_login():
     assert response.status_code == 401
 
 
-def test_realtime_session_uses_patient_semantic_vad_and_selected_companion():
+def test_realtime_session_uses_balanced_semantic_vad_and_english_transcription():
     config = build_realtime_session(
         persona="logical",
         conversation_mode="advice",
@@ -29,8 +29,9 @@ def test_realtime_session_uses_patient_semantic_vad_and_selected_companion():
     )
     assert config["model"]
     assert config["audio"]["input"]["turn_detection"]["type"] == "semantic_vad"
-    assert config["audio"]["input"]["turn_detection"]["eagerness"] == "low"
+    assert config["audio"]["input"]["turn_detection"]["eagerness"] == "medium"
     assert config["audio"]["input"]["turn_detection"]["create_response"] is True
+    assert config["audio"]["input"]["transcription"]["languages"] == ["en"]
     assert config["audio"]["output"]["voice"] == "cedar"
     assert "Your name is Atlas." in config["instructions"]
     assert "Do not repeat your introduction in later turns." in config["instructions"]

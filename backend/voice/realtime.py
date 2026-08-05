@@ -72,7 +72,23 @@ def build_realtime_session(
 ) -> dict[str, Any]:
     eagerness = settings.OPENAI_REALTIME_VAD_EAGERNESS.lower().strip()
     if eagerness not in {"low", "medium", "high", "auto"}:
-        eagerness = "low"
+        eagerness = "medium"
+    languages = [
+        code.strip().lower()
+        for code in settings.OPENAI_REALTIME_TRANSCRIPTION_LANGUAGES.split(",")
+        if code.strip()
+    ]
+    transcription: dict[str, Any] = {
+        "model": settings.OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+        "delay": settings.OPENAI_REALTIME_TRANSCRIPTION_DELAY,
+    }
+    if languages:
+        # gpt-live-transcribe uses the plural `languages` configuration.
+        # Other transcription models accept the singular `language` hint.
+        if settings.OPENAI_REALTIME_TRANSCRIPTION_MODEL == "gpt-live-transcribe":
+            transcription["languages"] = languages
+        else:
+            transcription["language"] = languages[0]
     return {
         "type": "realtime",
         "model": settings.OPENAI_REALTIME_MODEL,
@@ -82,10 +98,7 @@ def build_realtime_session(
         ),
         "audio": {
             "input": {
-                "transcription": {
-                    "model": settings.OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-                    "delay": settings.OPENAI_REALTIME_TRANSCRIPTION_DELAY,
-                },
+                "transcription": transcription,
                 "turn_detection": {
                     # Semantic VAD accounts for whether the speaker sounds
                     # finished, instead of responding to every short pause.

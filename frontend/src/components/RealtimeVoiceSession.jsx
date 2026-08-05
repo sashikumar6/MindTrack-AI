@@ -651,7 +651,8 @@ export default function RealtimeVoiceSession({
             </div>
           </details>
           <button type="button" className="realtime-end-button" onClick={endSession}>
-            End check-in
+            <span className="realtime-end-icon" aria-hidden="true">✓</span>
+            Finish &amp; save
           </button>
         </>
       ) : null}

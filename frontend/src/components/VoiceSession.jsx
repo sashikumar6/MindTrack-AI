@@ -526,7 +526,8 @@ export default function VoiceSession({ onComplete, personaMode = "empathetic" })
 
           {state !== "idle" && state !== "opening" ? (
             <button type="button" className="realtime-end-button" onClick={endCheckin}>
-              End check-in
+              <span className="realtime-end-icon" aria-hidden="true">✓</span>
+              Finish &amp; save
             </button>
           ) : null}
 

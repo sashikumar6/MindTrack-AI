@@ -16,3 +16,4 @@ itsdangerous
 alembic
 psycopg2-binary
 pytest
+psycopg[binary]>=3.1
